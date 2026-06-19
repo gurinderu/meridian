@@ -40,6 +40,7 @@ pub async fn spawn(
         while let Some(mut line) = stdin_rx.recv().await {
             line.push('\n');
             if stdin.write_all(line.as_bytes()).await.is_err() {
+                tracing::warn!("meridian-transport: stdin writer task exiting after write error");
                 break;
             }
             let _ = stdin.flush().await;
@@ -62,6 +63,7 @@ pub async fn spawn(
                 continue;
             }
             if events_tx.send(msg).await.is_err() {
+                tracing::debug!("meridian-transport: reader task exiting, event consumer dropped");
                 break;
             }
         }
@@ -83,6 +85,12 @@ impl CliProcess {
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stdin closed"))
     }
 
+    /// Receive the next event from the CLI process.
+    ///
+    /// **Important**: The caller MUST continuously poll this method and drive each turn to
+    /// completion (until a `result` event or `None` is returned) before dropping the process.
+    /// The events channel is bounded; a stalled consumer fills it and blocks the reader task,
+    /// which blocks in-flight control_request/tool responses and causes timeouts.
     pub async fn next_event(&mut self) -> Option<CliMessage> {
         self.events_rx.recv().await
     }
