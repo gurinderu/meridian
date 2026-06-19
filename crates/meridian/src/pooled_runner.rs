@@ -75,12 +75,12 @@ impl StreamRunner for PooledRunner {
             let pump = async {
                 while let Some(ev) = lease.proc().next_event().await {
                     match ev {
-                        CliMessage::StreamEvent { event, .. }
-                            if tx.send(Ok(sse_event(&event))).await.is_err() =>
-                        {
-                            break; // client disconnected
+                        CliMessage::StreamEvent { event, .. } => {
+                            let send_err = tx.send(Ok(sse_event(&event))).await.is_err();
+                            if send_err {
+                                break; // client disconnected
+                            }
                         }
-                        CliMessage::StreamEvent { .. } => {}
                         CliMessage::Result { .. } => break,
                         _ => {}
                     }
