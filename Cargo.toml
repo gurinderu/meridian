@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/meridian-transport", "crates/meridian", "crates/meridian-cli"]
+members = ["crates/meridian-transport", "crates/meridian", "bin/meridian-cli"]
 
 [workspace.package]
 edition = "2021"
