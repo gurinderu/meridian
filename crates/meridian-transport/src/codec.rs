@@ -6,6 +6,7 @@ pub enum CliMessage {
     Assistant { message: Value, session_id: Option<String>, raw: Value },
     Result { subtype: String, result: Option<String>, raw: Value },
     ControlRequest { request_id: String, request: Value },
+    StreamEvent { event: Value, raw: Value },
     Other(Value),
 }
 
@@ -34,6 +35,10 @@ pub fn parse_line(line: &str) -> Result<CliMessage, serde_json::Error> {
         ("control_request", _) => CliMessage::ControlRequest {
             request_id: v["request_id"].as_str().unwrap_or_default().to_string(),
             request: v["request"].clone(),
+        },
+        ("stream_event", _) => CliMessage::StreamEvent {
+            event: v.get("event").cloned().unwrap_or(Value::Null),
+            raw: v,
         },
         _ => CliMessage::Other(v),
     })

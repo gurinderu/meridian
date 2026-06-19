@@ -29,3 +29,19 @@ fn parses_control_request_mcp_message() {
 fn unknown_type_falls_back_to_other() {
     assert!(matches!(parse_line(r#"{"type":"rate_limit_event"}"#).unwrap(), CliMessage::Other(_)));
 }
+
+#[test]
+fn parses_stream_event_line() {
+    // First stream_event line in the recorded fixture is a message_start.
+    let content = std::fs::read_to_string("tests/fixtures/streaming_turn.ndjson").unwrap();
+    let line = content
+        .lines()
+        .find(|l| l.contains("\"type\":\"stream_event\""))
+        .expect("fixture has a stream_event line");
+    match meridian_transport::codec::parse_line(line).unwrap() {
+        meridian_transport::codec::CliMessage::StreamEvent { event, .. } => {
+            assert!(event.get("type").and_then(|t| t.as_str()).is_some());
+        }
+        other => panic!("expected StreamEvent, got {other:?}"),
+    }
+}

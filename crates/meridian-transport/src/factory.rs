@@ -29,7 +29,7 @@ impl ProcessFactory for CliProcessFactory {
             config_dir,
             model: None,
             mcp_config: None,
-            include_partial_messages: false,
+            include_partial_messages: true,
         };
         let base_env: HashMap<String, String> = std::env::vars().collect();
         spawn(&self.exe, &cfg, &base_env, self.tools.clone()).await
