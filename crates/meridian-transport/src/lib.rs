@@ -7,3 +7,4 @@ pub mod control;
 pub mod process;
 pub mod pool;
 pub mod factory;
+pub mod passthrough;
