@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use serde_json::{json, Value};
 use meridian_transport::codec::CliMessage;
-use meridian_transport::factory;
+use meridian_transport::factory::{self, EnvResolver, NoEnv};
 use meridian_transport::mcp::ToolRegistry;
 use meridian_transport::pool::{IsolationKey, Pool};
 
@@ -9,6 +10,27 @@ struct NoTools;
 impl ToolRegistry for NoTools {
     fn list(&self) -> Vec<Value> { vec![] }
     fn call(&self, _n: &str, _a: &Value) -> Value { json!({}) }
+}
+
+/// Echoes the requested profile id into a sentinel env var.
+struct FixedEnv;
+impl EnvResolver for FixedEnv {
+    fn overlay(&self, profile_id: &str) -> HashMap<String, String> {
+        HashMap::from([("MERIDIAN_TEST_PROFILE".to_string(), profile_id.to_string())])
+    }
+}
+
+#[test]
+fn no_env_resolver_yields_empty_overlay() {
+    assert!(NoEnv.overlay("anything").is_empty());
+}
+
+#[test]
+fn resolver_overlay_is_keyed_by_profile_id() {
+    assert_eq!(FixedEnv.overlay("work").get("MERIDIAN_TEST_PROFILE").map(String::as_str), Some("work"));
+    // new_with_resolver must accept a custom resolver (compile-level wiring check).
+    let root = std::env::temp_dir().join("meridian-factory-ctor");
+    let _f = factory::new_with_resolver("claude", root, Arc::new(NoTools), Arc::new(FixedEnv));
 }
 
 #[tokio::test]

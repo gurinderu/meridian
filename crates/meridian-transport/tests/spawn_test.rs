@@ -10,6 +10,7 @@ fn cfg() -> SpawnConfig {
         include_partial_messages: true,
         resume: None,
         max_turns: None,
+        env_overlay: Default::default(),
     }
 }
 
@@ -54,4 +55,31 @@ fn args_include_max_turns_when_set() {
     let mut c = cfg();
     c.max_turns = Some(3);
     assert!(build_args(&c).windows(2).any(|w| w[0]=="--max-turns" && w[1]=="3"));
+}
+
+#[test]
+fn env_overlay_is_applied_after_strip_and_wins() {
+    let mut base = HashMap::new();
+    base.insert("ANTHROPIC_API_KEY".to_string(), "host-key".to_string());
+    let mut c = cfg();
+    // api-profile overlay: must survive the strip of ANTHROPIC_API_KEY and override the base config dir.
+    c.env_overlay = HashMap::from([
+        ("ANTHROPIC_API_KEY".to_string(), "profile-key".to_string()),
+        ("ANTHROPIC_BASE_URL".to_string(), "https://example.test".to_string()),
+        ("CLAUDE_CONFIG_DIR".to_string(), "/overridden".to_string()),
+    ]);
+    let env = build_env(&c, &base);
+    assert_eq!(env.get("ANTHROPIC_API_KEY").map(String::as_str), Some("profile-key"), "overlay survives strip + wins");
+    assert_eq!(env.get("ANTHROPIC_BASE_URL").map(String::as_str), Some("https://example.test"));
+    assert_eq!(env.get("CLAUDE_CONFIG_DIR").map(String::as_str), Some("/overridden"), "overlay overrides base config dir");
+}
+
+#[test]
+fn empty_overlay_preserves_current_build_env() {
+    let mut base = HashMap::new();
+    base.insert("ANTHROPIC_API_KEY".to_string(), "host-key".to_string());
+    let env = build_env(&cfg(), &base); // cfg() now has an empty overlay
+    assert!(!env.contains_key("ANTHROPIC_API_KEY"), "still stripped when no overlay");
+    assert!(env.contains_key("CLAUDE_CONFIG_DIR"));
+    assert_eq!(env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR").map(String::as_str), Some(""));
 }

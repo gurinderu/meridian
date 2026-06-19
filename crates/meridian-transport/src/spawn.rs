@@ -9,6 +9,11 @@ pub struct SpawnConfig {
     pub include_partial_messages: bool,
     pub resume: Option<String>,
     pub max_turns: Option<u32>,
+    /// Per-profile env vars overlaid on the subprocess environment. Applied
+    /// LAST in `build_env` so a profile can override both the host-var strip
+    /// (e.g. `ANTHROPIC_API_KEY` for an api profile) and the base
+    /// `CLAUDE_CONFIG_DIR` (e.g. an oauth-token profile's isolated dir).
+    pub env_overlay: HashMap<String, String>,
 }
 
 /// Confirmed base flags (live CLI + spike). Isolation is via env/SDK options,
@@ -60,6 +65,11 @@ pub fn build_env(cfg: &SpawnConfig, base: &HashMap<String, String>) -> HashMap<S
     // isolated config dir. (Per-profile auth uses CLAUDE_CODE_OAUTH_TOKEN
     // instead; that bypasses the keychain entirely — a profiles-phase concern.)
     env.insert("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), String::new());
+    // Profile overlay wins last: survives the strip above and overrides the
+    // base CLAUDE_CONFIG_DIR for oauth-token profiles.
+    for (k, v) in &cfg.env_overlay {
+        env.insert(k.clone(), v.clone());
+    }
     env
 }
 

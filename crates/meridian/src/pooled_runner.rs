@@ -65,6 +65,7 @@ impl PooledRunner {
             include_partial_messages: false,
             resume: req.resume.clone(),
             max_turns: Some(3),
+            env_overlay: Default::default(),
         };
         let tools = Arc::new(meridian_transport::passthrough::new(req.tools.clone()));
         let base: HashMap<String, String> = std::env::vars().collect();
