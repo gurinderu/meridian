@@ -4,4 +4,5 @@ pub mod error;
 pub mod openai;
 pub mod pooled_runner;
 pub mod server;
+pub mod session;
 pub mod sse;
