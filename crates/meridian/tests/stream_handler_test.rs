@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use serde_json::{json, Value};
+use serde_json::json;
 use tower::ServiceExt;
 use tokio::sync::mpsc;
 use meridian::error::ProxyError;
@@ -10,8 +10,9 @@ use meridian::sse::EventStream;
 
 struct FakeRunner;
 impl TurnRunner for FakeRunner {
-    async fn run_turn(&self, _m: String, _s: Option<String>, _p: String) -> Result<Value, ProxyError> {
-        Ok(json!({"role":"assistant","content":[]}))
+    async fn run_turn(&self, _req: meridian::server::TurnRequest) -> Result<meridian::server::TurnResult, ProxyError> {
+        let message = json!({"role":"assistant","content":[]});
+        Ok(meridian::server::TurnResult { message, session_id: None })
     }
 }
 impl StreamRunner for FakeRunner {

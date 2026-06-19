@@ -11,12 +11,13 @@ use meridian::sse::EventStream;
 
 struct FakeRunner;
 impl TurnRunner for FakeRunner {
-    async fn run_turn(&self, model: String, _s: Option<String>, prompt: String) -> Result<Value, ProxyError> {
-        Ok(json!({
-            "id":"msg_x","role":"assistant","model":model,
-            "content":[{"type":"text","text":format!("echo:{prompt}")}],
+    async fn run_turn(&self, req: meridian::server::TurnRequest) -> Result<meridian::server::TurnResult, ProxyError> {
+        let message = json!({
+            "id":"msg_x","role":"assistant","model":req.model,
+            "content":[{"type":"text","text":format!("echo:{}", req.prompt)}],
             "stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":1}
-        }))
+        });
+        Ok(meridian::server::TurnResult { message, session_id: None })
     }
 }
 impl StreamRunner for FakeRunner {

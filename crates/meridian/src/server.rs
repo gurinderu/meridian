@@ -8,14 +8,24 @@ use serde_json::Value;
 
 use crate::error::ProxyError;
 
+pub struct TurnRequest {
+    pub model: String,
+    pub system: Option<String>,
+    pub prompt: String,
+    pub resume: Option<String>,
+}
+
+pub struct TurnResult {
+    pub message: serde_json::Value,
+    pub session_id: Option<String>,
+}
+
 /// Runs one prompt to completion and returns the Anthropic `message` object.
 pub trait TurnRunner: Send + Sync {
     fn run_turn(
         &self,
-        model: String,
-        system: Option<String>,
-        prompt: String,
-    ) -> impl std::future::Future<Output = Result<Value, ProxyError>> + Send;
+        req: TurnRequest,
+    ) -> impl std::future::Future<Output = Result<TurnResult, ProxyError>> + Send;
 }
 
 /// Runs one prompt and streams raw Anthropic stream-event Values as they arrive.
@@ -58,8 +68,8 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
         let sse = events.map(|v| Ok::<_, std::convert::Infallible>(crate::sse::sse_event(&v)));
         return axum::response::sse::Sse::new(sse).into_response();
     }
-    match runner.run_turn(model, system, prompt).await {
-        Ok(msg) => Json(msg).into_response(),
+    match runner.run_turn(TurnRequest { model, system, prompt, resume: None }).await {
+        Ok(r) => Json(r.message).into_response(),
         Err(e) => e.into_response(),
     }
 }
@@ -92,8 +102,8 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
         return axum::response::sse::Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx)).into_response();
     }
 
-    match runner.run_turn(model.clone(), system, prompt).await {
-        Ok(msg) => Json(crate::openai::anthropic_to_openai(&msg, &model)).into_response(),
+    match runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None }).await {
+        Ok(r) => Json(crate::openai::anthropic_to_openai(&r.message, &model)).into_response(),
         Err(e) => e.into_response(),
     }
 }
