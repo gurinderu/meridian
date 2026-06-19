@@ -5,3 +5,8 @@ version.workspace = true
 
 [dependencies]
 meridian-transport = { path = "../meridian-transport" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+axum = "0.7"
