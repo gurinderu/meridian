@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// OpenAI message content: a string, or an array of `{type:"text", text}` parts.
 pub fn extract_openai_content(content: &Value) -> String {
@@ -53,4 +53,64 @@ pub fn openai_to_canonical(body: &Value) -> Result<(String, Option<String>, Stri
 
     let system = if system_parts.is_empty() { None } else { Some(system_parts.join("\n\n")) };
     Ok((model, system, prompt))
+}
+
+/// Anthropic `stop_reason` -> OpenAI `finish_reason`.
+pub fn finish_reason(stop_reason: Option<&str>) -> &'static str {
+    match stop_reason {
+        Some("max_tokens") => "length",
+        Some("tool_use") => "tool_calls",
+        _ => "stop",
+    }
+}
+
+/// Translate an Anthropic `message` object into an OpenAI `chat.completion`.
+pub fn anthropic_to_openai(msg: &Value, model: &str) -> Value {
+    let text = msg
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|b| b.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .concat()
+        })
+        .unwrap_or_default();
+
+    let id = msg.get("id").and_then(Value::as_str).unwrap_or("meridian");
+    let input = msg["usage"]["input_tokens"].as_u64().unwrap_or(0);
+    let output = msg["usage"]["output_tokens"].as_u64().unwrap_or(0);
+    let fr = finish_reason(msg.get("stop_reason").and_then(Value::as_str));
+
+    json!({
+        "id": format!("chatcmpl-{id}"),
+        "object": "chat.completion",
+        "created": 0,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": text },
+            "finish_reason": fr
+        }],
+        "usage": {
+            "prompt_tokens": input,
+            "completion_tokens": output,
+            "total_tokens": input + output
+        }
+    })
+}
+
+const EXPOSED_MODELS: &[&str] = &[
+    "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "opus", "sonnet", "haiku",
+];
+
+/// OpenAI `/v1/models` list of the models this proxy exposes.
+pub fn model_list() -> Value {
+    let data: Vec<Value> = EXPOSED_MODELS
+        .iter()
+        .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "anthropic"}))
+        .collect();
+    json!({ "object": "list", "data": data })
 }
