@@ -9,3 +9,13 @@ path = "src/main.rs"
 
 [dependencies]
 meridian = { path = "../meridian" }
+tokio = { workspace = true }
+axum = "0.7"
+tracing = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+axum = "0.7"
+serde_json = { workspace = true }
