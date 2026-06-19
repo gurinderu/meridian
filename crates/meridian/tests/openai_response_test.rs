@@ -30,6 +30,36 @@ fn translate_message_to_chat_completion() {
 }
 
 #[test]
+fn tool_use_only_turn_yields_null_content() {
+    let msg = json!({
+        "id":"msg_tool","role":"assistant",
+        "content":[{"type":"tool_use","id":"call_1","name":"get_weather","input":{"city":"NYC"}}],
+        "stop_reason":"tool_use",
+        "usage":{"input_tokens":5,"output_tokens":2}
+    });
+    let out = anthropic_to_openai(&msg, "sonnet");
+    assert_eq!(out["object"], "chat.completion");
+    assert_eq!(out["choices"][0]["finish_reason"], "tool_calls");
+    assert!(
+        out["choices"][0]["message"]["content"].is_null(),
+        "expected null content for tool_use turn, got: {}",
+        out["choices"][0]["message"]["content"]
+    );
+}
+
+#[test]
+fn text_turn_still_yields_string_content() {
+    let msg = json!({
+        "id":"msg_txt","role":"assistant",
+        "content":[{"type":"text","text":"hello"}],
+        "stop_reason":"end_turn",
+        "usage":{"input_tokens":3,"output_tokens":1}
+    });
+    let out = anthropic_to_openai(&msg, "haiku");
+    assert_eq!(out["choices"][0]["message"]["content"], "hello");
+}
+
+#[test]
 fn model_list_is_openai_shaped() {
     let list = model_list();
     assert_eq!(list["object"], "list");

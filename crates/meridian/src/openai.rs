@@ -79,6 +79,8 @@ pub fn anthropic_to_openai(msg: &Value, model: &str) -> Value {
         })
         .unwrap_or_default();
 
+    let content = if text.is_empty() { Value::Null } else { Value::String(text) };
+
     let id = msg.get("id").and_then(Value::as_str).unwrap_or("meridian");
     let input = msg["usage"]["input_tokens"].as_u64().unwrap_or(0);
     let output = msg["usage"]["output_tokens"].as_u64().unwrap_or(0);
@@ -91,7 +93,7 @@ pub fn anthropic_to_openai(msg: &Value, model: &str) -> Value {
         "model": model,
         "choices": [{
             "index": 0,
-            "message": { "role": "assistant", "content": text },
+            "message": { "role": "assistant", "content": content },
             "finish_reason": fr
         }],
         "usage": {
