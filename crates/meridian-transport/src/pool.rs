@@ -10,7 +10,10 @@ pub struct IsolationKey {
 
 pub trait ProcessFactory: Send + Sync {
     type Proc: Send;
-    fn spawn(&self, key: &IsolationKey) -> Self::Proc;
+    fn spawn(
+        &self,
+        key: &IsolationKey,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Proc>> + Send;
 }
 
 struct Inner<P> {
@@ -41,21 +44,27 @@ impl<F: ProcessFactory> Pool<F> {
         self.inner.lock().unwrap().live
     }
 
-    pub fn acquire(&self, key: &IsolationKey) -> Option<Lease<'_, F>> {
-        let mut g = self.inner.lock().unwrap();
-        // Reuse a warm process for this exact key.
-        if let Some(p) = g.idle.get_mut(key).and_then(Vec::pop) {
-            g.live += 1;
-            return Some(Lease { pool: self, key: key.clone(), proc: Some(p) });
+    pub async fn acquire(&self, key: &IsolationKey) -> std::io::Result<Option<Lease<'_, F>>> {
+        // Phase 1: lock, decide, never hold the lock across the await.
+        {
+            let mut g = self.inner.lock().unwrap();
+            if let Some(p) = g.idle.get_mut(key).and_then(Vec::pop) {
+                g.live += 1;
+                return Ok(Some(Lease { pool: self, key: key.clone(), proc: Some(p) }));
+            }
+            if g.live >= self.global_cap {
+                return Ok(None);
+            }
+            g.live += 1; // reserve the slot before releasing the lock
         }
-        // Otherwise spawn, respecting the global cap on live processes.
-        if g.live >= self.global_cap {
-            return None;
+        // Phase 2: spawn outside the lock; on failure, give the slot back.
+        match self.factory.spawn(key).await {
+            Ok(p) => Ok(Some(Lease { pool: self, key: key.clone(), proc: Some(p) })),
+            Err(e) => {
+                self.inner.lock().unwrap().live -= 1;
+                Err(e)
+            }
         }
-        g.live += 1;
-        drop(g);
-        let p = self.factory.spawn(key);
-        Some(Lease { pool: self, key: key.clone(), proc: Some(p) })
     }
 
     fn release(&self, key: IsolationKey, proc: F::Proc) {
