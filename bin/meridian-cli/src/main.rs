@@ -1,31 +1,63 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use meridian::pooled_runner::pooled_runner;
 use meridian::server::router;
+use meridian::session::SessionStore;
+use meridian::service::health_check;
 
 #[derive(Parser)]
-struct Args {
-    /// Port to bind.
+#[command(name = "meridian", about = "Local proxy exposing Claude Code as the Anthropic + OpenAI APIs")]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Run the proxy server (default).
+    Serve(ServeArgs),
+    /// Check whether a running server answers /health.
+    Status {
+        #[arg(long, default_value_t = 8787)]
+        port: u16,
+    },
+}
+
+#[derive(clap::Args)]
+struct ServeArgs {
     #[arg(long, default_value_t = 8787)]
     port: u16,
-    /// Path to the `claude` executable.
     #[arg(long, default_value = "claude")]
     claude: String,
-    /// Max concurrent pooled processes.
     #[arg(long, default_value_t = 10)]
     cap: usize,
 }
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
-    let args = Args::parse();
-    let config_root = std::env::temp_dir().join("meridian-config");
-    let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap));
-    let sessions = std::sync::Arc::new(meridian::session::SessionStore::new());
-    let app = router(runner, sessions);
+    let cli = Cli::parse();
+    match cli.cmd {
+        None => serve(ServeArgs { port: 8787, claude: "claude".into(), cap: 10 }).await,
+        Some(Cmd::Serve(a)) => serve(a).await,
+        Some(Cmd::Status { port }) => {
+            if health_check(port).await {
+                println!("meridian: up (127.0.0.1:{port})");
+            } else {
+                println!("meridian: down (127.0.0.1:{port})");
+                std::process::exit(1);
+            }
+        }
+    }
+}
 
+async fn serve(args: ServeArgs) {
+    tracing_subscriber::fmt::init();
+    let config_root: PathBuf = std::env::temp_dir().join("meridian-config");
+    let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap));
+    let sessions = Arc::new(SessionStore::new());
+    let app = router(runner, sessions);
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
     tracing::info!("meridian listening on {addr}");
