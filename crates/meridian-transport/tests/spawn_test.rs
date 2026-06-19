@@ -31,4 +31,7 @@ fn env_isolates_config_dir_and_strips_secrets() {
     assert!(!env.contains_key("ANTHROPIC_API_KEY"));
     assert!(!env.contains_key("NODE_OPTIONS"));
     assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin"));
+    // Realigns the keychain key so the default OAuth token is found under an
+    // isolated config dir -> auth succeeds -> streaming partials flow.
+    assert_eq!(env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR").map(String::as_str), Some(""));
 }

@@ -40,5 +40,14 @@ pub fn build_env(cfg: &SpawnConfig, base: &HashMap<String, String>) -> HashMap<S
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     env.insert("CLAUDE_CONFIG_DIR".into(), cfg.config_dir.to_string_lossy().into_owned());
+    // Setting CLAUDE_CONFIG_DIR alone makes the CLI derive a per-config-dir
+    // macOS keychain key (a `-<hash>` suffix), so the default OAuth token is
+    // not found -> 401 -> the API call fails and NO stream_event partials are
+    // emitted (reverse-engineered from cli.js `m1()`). Setting
+    // CLAUDE_SECURESTORAGE_CONFIG_DIR="" realigns the keychain key to the
+    // default entry, so auth succeeds and streaming partials flow under an
+    // isolated config dir. (Per-profile auth uses CLAUDE_CODE_OAUTH_TOKEN
+    // instead; that bypasses the keychain entirely — a profiles-phase concern.)
+    env.insert("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), String::new());
     env
 }
