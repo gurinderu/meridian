@@ -1,0 +1,11 @@
+[package]
+name = "meridian-cli"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "meridian"
+path = "src/main.rs"
+
+[dependencies]
+meridian = { path = "../meridian" }

@@ -1,0 +1,7 @@
+[package]
+name = "meridian"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+meridian-transport = { path = "../meridian-transport" }
