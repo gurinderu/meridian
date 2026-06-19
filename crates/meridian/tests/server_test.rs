@@ -18,7 +18,7 @@ impl TurnRunner for FakeRunner {
             "content":[{"type":"text","text":format!("sys={};p={}", req.system.unwrap_or_default(), req.prompt)}],
             "stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}
         });
-        Ok(meridian::server::TurnResult { message, session_id: None })
+        Ok(meridian::server::TurnResult { message, session_id: None, captured_tools: Vec::new() })
     }
 }
 impl StreamRunner for FakeRunner {

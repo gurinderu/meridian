@@ -19,15 +19,20 @@ impl ToolRegistry for NoTools {
 
 pub struct PooledRunner {
     pool: std::sync::Arc<Pool<factory::CliProcessFactory>>,
+    exe: String,
+    config_root: PathBuf,
 }
 
 pub fn pooled_runner(exe: String, config_root: PathBuf, cap: usize) -> PooledRunner {
-    let f = factory::new(exe, config_root, Arc::new(NoTools));
-    PooledRunner { pool: std::sync::Arc::new(Pool::new(f, cap)) }
+    let f = factory::new(exe.clone(), config_root.clone(), Arc::new(NoTools));
+    PooledRunner { pool: std::sync::Arc::new(Pool::new(f, cap)), exe, config_root }
 }
 
 impl TurnRunner for PooledRunner {
     async fn run_turn(&self, req: TurnRequest) -> Result<TurnResult, ProxyError> {
+        if !req.tools.is_empty() {
+            return self.run_passthrough(req).await;
+        }
         let key = IsolationKey {
             profile_id: "default".into(),
             cwd: "/".into(),
@@ -45,6 +50,36 @@ impl TurnRunner for PooledRunner {
         lease.proc().shutdown().await;
         lease.discard(); // a shut-down process must not return to the warm idle set
         result
+    }
+}
+
+impl PooledRunner {
+    async fn run_passthrough(&self, req: TurnRequest) -> Result<TurnResult, ProxyError> {
+        use std::collections::HashMap;
+        let config_dir = self.config_root.join("default");
+        let _ = std::fs::create_dir_all(&config_dir);
+        let cfg = meridian_transport::spawn::SpawnConfig {
+            config_dir,
+            model: None,
+            mcp_config: Some(serde_json::json!({"mcpServers":{"oc":{"type":"sdk","name":"oc"}}})),
+            include_partial_messages: false,
+            resume: req.resume.clone(),
+            max_turns: Some(3),
+        };
+        let tools = Arc::new(meridian_transport::passthrough::new(req.tools.clone()));
+        let base: HashMap<String, String> = std::env::vars().collect();
+        let mut proc = meridian_transport::process::spawn(&self.exe, &cfg, &base, tools.clone())
+            .await
+            .map_err(|e| ProxyError::Upstream(format!("spawn failed: {e}")))?;
+        let result = run_one_turn(&mut proc, req.system, req.prompt).await;
+        proc.shutdown().await;
+        match result {
+            Ok(mut tr) => {
+                tr.captured_tools = tools.captured();
+                Ok(tr)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -144,5 +179,5 @@ async fn run_one_turn(
     if let (Some(obj), Some(sr)) = (msg.as_object_mut(), stop_reason) {
         obj.insert("stop_reason".into(), Value::String(sr));
     }
-    Ok(TurnResult { message: msg, session_id })
+    Ok(TurnResult { message: msg, session_id, captured_tools: Vec::new() })
 }

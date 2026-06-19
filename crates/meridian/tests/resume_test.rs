@@ -19,6 +19,7 @@ impl TurnRunner for RecordingRunner {
         Ok(TurnResult {
             message: json!({"role":"assistant","content":[{"type":"text","text":"reply"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}),
             session_id: Some("sess-A".into()),
+            captured_tools: Vec::new(),
         })
     }
 }

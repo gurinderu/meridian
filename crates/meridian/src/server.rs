@@ -13,11 +13,13 @@ pub struct TurnRequest {
     pub system: Option<String>,
     pub prompt: String,
     pub resume: Option<String>,
+    pub tools: Vec<serde_json::Value>,
 }
 
 pub struct TurnResult {
     pub message: serde_json::Value,
     pub session_id: Option<String>,
+    pub captured_tools: Vec<serde_json::Value>,
 }
 
 /// Runs one prompt to completion and returns the Anthropic `message` object.
@@ -102,7 +104,7 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
             .join("\n")
     };
 
-    match state.runner.run_turn(TurnRequest { model, system, prompt, resume }).await {
+    match state.runner.run_turn(TurnRequest { model, system, prompt, resume, tools: Vec::new() }).await {
         Ok(r) => {
             if let Some(sid) = r.session_id {
                 // Store under the fingerprint of the conversation INCLUDING our reply,
@@ -148,7 +150,7 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
         return axum::response::sse::Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx)).into_response();
     }
 
-    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None }).await {
+    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None, tools: Vec::new() }).await {
         Ok(r) => Json(crate::openai::anthropic_to_openai(&r.message, &model)).into_response(),
         Err(e) => e.into_response(),
     }

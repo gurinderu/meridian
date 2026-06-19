@@ -13,7 +13,7 @@ struct FakeRunner;
 impl TurnRunner for FakeRunner {
     async fn run_turn(&self, _req: meridian::server::TurnRequest) -> Result<meridian::server::TurnResult, ProxyError> {
         let message = json!({"role":"assistant","content":[]});
-        Ok(meridian::server::TurnResult { message, session_id: None })
+        Ok(meridian::server::TurnResult { message, session_id: None, captured_tools: Vec::new() })
     }
 }
 impl StreamRunner for FakeRunner {
