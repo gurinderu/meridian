@@ -18,7 +18,7 @@ fn mcp_inner(request: &Value, tools: &dyn ToolRegistry) -> Value {
     let msg = &request["message"];
     let id = msg.get("id").cloned();
     // Notification (no id / null id): stub ack per the SDK's contract.
-    if id.as_ref().map_or(true, Value::is_null) {
+    if id.as_ref().is_none_or(Value::is_null) {
         return json!({ "mcp_response": { "jsonrpc": "2.0", "result": {}, "id": 0 } });
     }
     let id = id.unwrap();
