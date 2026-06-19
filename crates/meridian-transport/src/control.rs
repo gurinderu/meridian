@@ -6,6 +6,14 @@ use crate::mcp::ToolRegistry;
 pub fn handle_control_request(request_id: &str, request: &Value, tools: &dyn ToolRegistry) -> Value {
     let inner = match request.get("subtype").and_then(Value::as_str) {
         Some("mcp_message") => mcp_inner(request, tools),
+        Some("hook_callback") => {
+            let input = &request["input"];
+            tools.on_pre_tool_use(
+                input.get("tool_name").and_then(Value::as_str).unwrap_or(""),
+                input.get("tool_input").unwrap_or(&Value::Null),
+                request.get("tool_use_id").and_then(Value::as_str).unwrap_or(""),
+            )
+        }
         _ => json!({}),
     };
     json!({
