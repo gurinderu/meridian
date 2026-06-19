@@ -3,3 +3,4 @@
 pub mod error;
 pub mod pooled_runner;
 pub mod server;
+pub mod sse;
