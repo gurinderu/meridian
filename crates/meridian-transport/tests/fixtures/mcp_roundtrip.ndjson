@@ -1,0 +1,2 @@
+{"type":"control_request","request_id":"r1","request":{"subtype":"mcp_message","server_name":"spike","message":{"jsonrpc":"2.0","id":1,"method":"tools/list"}}}
+{"type":"control_request","request_id":"r2","request":{"subtype":"mcp_message","server_name":"spike","message":{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ping","arguments":{}}}}}
