@@ -23,6 +23,13 @@ enum Cmd {
         #[arg(long, default_value_t = 8787)]
         port: u16,
     },
+    /// Install + start meridian as a background OS service (launchd/systemd user).
+    Install {
+        #[arg(long, default_value_t = 8787)]
+        port: u16,
+    },
+    /// Stop + remove the background OS service.
+    Uninstall,
 }
 
 #[derive(clap::Args)]
@@ -48,6 +55,14 @@ async fn main() {
                 println!("meridian: down (127.0.0.1:{port})");
                 std::process::exit(1);
             }
+        }
+        Some(Cmd::Install { port }) => match meridian::service::install(port) {
+            Ok(path) => println!("meridian: installed background service -> {path}\n  check: meridian status --port {port}"),
+            Err(e) => { eprintln!("meridian: install failed: {e}"); std::process::exit(1); }
+        },
+        Some(Cmd::Uninstall) => {
+            let _ = meridian::service::uninstall();
+            println!("meridian: background service removed");
         }
     }
 }
