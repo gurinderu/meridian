@@ -23,7 +23,7 @@ impl TurnRunner for ToolRunner {
     }
 }
 impl StreamRunner for ToolRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _profile: Option<String>) -> EventStream {
         let (_tx, rx) = mpsc::channel::<Value>(1); ReceiverStream::new(rx)
     }
 }
@@ -31,7 +31,7 @@ impl StreamRunner for ToolRunner {
 #[tokio::test]
 async fn chat_completions_surfaces_tool_calls() {
     let runner = Arc::new(ToolRunner::default());
-    let app = router(runner.clone(), Arc::new(SessionStore::new()));
+    let app = router(runner.clone(), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let body = json!({
         "model":"opus",
         "tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}],

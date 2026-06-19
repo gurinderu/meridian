@@ -18,7 +18,7 @@ impl TurnRunner for FakeRunner {
     }
 }
 impl StreamRunner for FakeRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _profile: Option<String>) -> EventStream {
         let (tx, rx) = mpsc::channel::<Value>(8);
         tokio::spawn(async move {
             let _ = tx.send(json!({"type":"message_start","message":{"id":"msg_1"}})).await;
@@ -32,7 +32,7 @@ impl StreamRunner for FakeRunner {
 
 #[tokio::test]
 async fn openai_stream_emits_chunks_and_done() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let body = json!({"model":"opus","stream":true,"messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")
@@ -51,7 +51,7 @@ async fn openai_stream_emits_chunks_and_done() {
 
 #[tokio::test]
 async fn openai_stream_false_still_json() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let body = json!({"model":"opus","messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")

@@ -17,7 +17,7 @@ impl TurnRunner for FakeRunner {
     }
 }
 impl StreamRunner for FakeRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _profile: Option<String>) -> EventStream {
         let (tx, rx) = mpsc::channel::<serde_json::Value>(8);
         tokio::spawn(async move {
             let _ = tx.send(serde_json::json!({"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}})).await;
@@ -29,7 +29,7 @@ impl StreamRunner for FakeRunner {
 
 #[tokio::test]
 async fn stream_true_returns_sse_with_events() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let body = json!({"model":"sonnet","stream":true,"messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages").header("content-type","application/json")
@@ -47,7 +47,7 @@ async fn stream_true_returns_sse_with_events() {
 
 #[tokio::test]
 async fn stream_false_still_returns_json() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let body = json!({"model":"sonnet","messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages").header("content-type","application/json")

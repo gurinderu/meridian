@@ -14,6 +14,8 @@ pub struct TurnRequest {
     pub prompt: String,
     pub resume: Option<String>,
     pub tools: Vec<serde_json::Value>,
+    /// Resolved profile id selecting the Claude account for this turn.
+    pub profile: Option<String>,
 }
 
 pub struct TurnResult {
@@ -37,34 +39,42 @@ pub trait StreamRunner: Send + Sync {
         model: String,
         system: Option<String>,
         prompt: String,
+        profile: Option<String>,
     ) -> crate::sse::EventStream;
 }
 
 pub struct AppState<R> {
     pub runner: Arc<R>,
     pub sessions: Arc<crate::session::SessionStore>,
+    pub profiles: Arc<crate::profiles::ProfileStore>,
 }
 
 impl<R> Clone for AppState<R> {
     fn clone(&self) -> Self {
-        AppState { runner: self.runner.clone(), sessions: self.sessions.clone() }
+        AppState {
+            runner: self.runner.clone(),
+            sessions: self.sessions.clone(),
+            profiles: self.profiles.clone(),
+        }
     }
 }
 
 pub fn router<R: TurnRunner + StreamRunner + 'static>(
     runner: Arc<R>,
     sessions: Arc<crate::session::SessionStore>,
+    profiles: Arc<crate::profiles::ProfileStore>,
 ) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/v1/messages", post(messages::<R>))
         .route("/v1/chat/completions", post(chat_completions::<R>))
         .route("/v1/models", get(models))
-        .with_state(AppState { runner, sessions })
+        .with_state(AppState { runner, sessions, profiles })
 }
 
 async fn messages<R: TurnRunner + StreamRunner + 'static>(
     State(state): State<AppState<R>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> axum::response::Response {
     let messages = match body.get("messages").and_then(Value::as_array).filter(|a| !a.is_empty()) {
@@ -73,6 +83,8 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
     };
     let model = body.get("model").and_then(Value::as_str).unwrap_or("sonnet").to_string();
     let system = extract_system(&body);
+    let requested = headers.get("x-meridian-profile").and_then(|v| v.to_str().ok());
+    let profile = Some(state.profiles.resolve_id(requested));
 
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
         let prompt = match extract_last_user_text(messages) {
@@ -80,7 +92,7 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
             None => return ProxyError::BadRequest("no user message text found".into()).into_response(),
         };
         use tokio_stream::StreamExt;
-        let events = state.runner.run_stream(model, system, prompt);
+        let events = state.runner.run_stream(model, system, prompt, profile);
         let sse = events.map(|v| Ok::<_, std::convert::Infallible>(crate::sse::sse_event(&v)));
         return axum::response::sse::Sse::new(sse).into_response();
     }
@@ -115,7 +127,7 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
         .map(|ts| crate::tools::anthropic_tools_to_mcp_defs(ts))
         .unwrap_or_default();
 
-    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume, tools: mcp_tools }).await {
+    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume, tools: mcp_tools, profile }).await {
         Ok(r) => {
             let response = if r.captured_tools.is_empty() {
                 r.message.clone()
@@ -150,17 +162,20 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
 
 async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
     State(state): State<AppState<R>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> axum::response::Response {
     let (model, system, prompt) = match crate::openai::openai_to_canonical(&body) {
         Ok(t) => t,
         Err(e) => return ProxyError::BadRequest(e).into_response(),
     };
+    let requested = headers.get("x-meridian-profile").and_then(|v| v.to_str().ok());
+    let profile = Some(state.profiles.resolve_id(requested));
 
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
         use tokio_stream::StreamExt;
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::response::sse::Event, std::convert::Infallible>>(64);
-        let mut events = state.runner.run_stream(model.clone(), system, prompt);
+        let mut events = state.runner.run_stream(model.clone(), system, prompt, profile);
         let model2 = model.clone();
         tokio::spawn(async move {
             let mut chunker = crate::openai::new_chunker(&model2);
@@ -182,7 +197,7 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
         .map(|ts| crate::openai::openai_tools_to_mcp_defs(ts))
         .unwrap_or_default();
 
-    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None, tools: mcp_tools }).await {
+    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None, tools: mcp_tools, profile }).await {
         Ok(r) => {
             let resp = if r.captured_tools.is_empty() {
                 crate::openai::anthropic_to_openai(&r.message, &model)

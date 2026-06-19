@@ -22,7 +22,7 @@ impl TurnRunner for RecRunner {
     }
 }
 impl StreamRunner for RecRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _profile: Option<String>) -> EventStream {
         let (_tx, rx) = mpsc::channel::<Value>(1); ReceiverStream::new(rx)
     }
 }
@@ -30,7 +30,7 @@ impl StreamRunner for RecRunner {
 #[tokio::test]
 async fn tool_result_request_sends_unwrapped_result_as_prompt() {
     let runner = Arc::new(RecRunner::default());
-    let app = router(runner.clone(), Arc::new(SessionStore::new()));
+    let app = router(runner.clone(), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let body = json!({"model":"opus","tools":[{"name":"get_weather"}],"messages":[
         {"role":"user","content":"weather in Paris?"},
         {"role":"assistant","content":[{"type":"tool_use","id":"tu_9","name":"get_weather","input":{"city":"Paris"}}]},

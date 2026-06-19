@@ -7,8 +7,8 @@ use tokio_stream::StreamExt;
 #[ignore = "requires a live, authenticated `claude` CLI"]
 async fn stream_yields_deltas_and_stop() {
     let root = std::env::temp_dir().join(format!("meridian-stream-{}", std::process::id()));
-    let runner = pooled_runner("claude".into(), root, 2);
-    let mut stream = runner.run_stream("sonnet".into(), None, "Reply with exactly: OK".into());
+    let runner = pooled_runner("claude".into(), root, 2, std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())));
+    let mut stream = runner.run_stream("sonnet".into(), None, "Reply with exactly: OK".into(), None);
 
     // With the keychain-realignment fix (CLAUDE_SECURESTORAGE_CONFIG_DIR="" in
     // the spawn env), auth succeeds under an isolated config dir, so the CLI
@@ -35,7 +35,7 @@ async fn http_stream_true_streams_sse() {
     use meridian::server::router;
     use meridian::session::SessionStore;
     let root = std::env::temp_dir().join(format!("meridian-httpstream-{}", std::process::id()));
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2)), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())))), Arc::new(SessionStore::new()), std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())));
     let body = serde_json::json!({"model":"sonnet","stream":true,"messages":[{"role":"user","content":"Reply with exactly: OK"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages").header("content-type","application/json")

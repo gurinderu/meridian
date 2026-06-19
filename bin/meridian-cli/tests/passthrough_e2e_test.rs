@@ -11,7 +11,7 @@ use meridian::session::SessionStore;
 #[ignore = "requires a live, authenticated `claude` CLI"]
 async fn client_tool_surfaces_as_tool_use() {
     let root = std::env::temp_dir().join(format!("meridian-pt-e2e-{}", std::process::id()));
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2)), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())))), Arc::new(SessionStore::new()), std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())));
     let body = json!({
         "model":"sonnet",
         "tools":[{"name":"edit_file","description":"Edit a file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}],

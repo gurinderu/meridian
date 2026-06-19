@@ -14,6 +14,7 @@ async fn passthrough_captures_tool_use_and_turn_ends() {
     let cfg = SpawnConfig {
         config_dir: dir, model: None, mcp_config: Some(json!({"mcpServers":{"oc":{"type":"sdk","name":"oc"}}})),
         include_partial_messages: false, resume: None, max_turns: Some(3),
+        env_overlay: Default::default(),
     };
     let tools = Arc::new(passthrough::new(vec![json!({
         "name":"edit_file","description":"Edit a file (client-executed).",

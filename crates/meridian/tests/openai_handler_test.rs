@@ -22,7 +22,7 @@ impl TurnRunner for FakeRunner {
     }
 }
 impl StreamRunner for FakeRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _profile: Option<String>) -> EventStream {
         let (_tx, rx) = mpsc::channel::<serde_json::Value>(1);
         ReceiverStream::new(rx)
     }
@@ -30,7 +30,7 @@ impl StreamRunner for FakeRunner {
 
 #[tokio::test]
 async fn chat_completions_returns_openai_shape() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let body = json!({"model":"opus","messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")
@@ -46,7 +46,7 @@ async fn chat_completions_returns_openai_shape() {
 
 #[tokio::test]
 async fn chat_completions_empty_messages_is_400() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")
             .body(Body::from(json!({"messages":[]}).to_string())).unwrap()
@@ -56,7 +56,7 @@ async fn chat_completions_empty_messages_is_400() {
 
 #[tokio::test]
 async fn models_endpoint_lists_models() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let resp = app.oneshot(Request::get("/v1/models").body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();

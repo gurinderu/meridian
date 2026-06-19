@@ -70,9 +70,10 @@ async fn main() {
 async fn serve(args: ServeArgs) {
     tracing_subscriber::fmt::init();
     let config_root: PathBuf = std::env::temp_dir().join("meridian-config");
-    let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap));
+    let profiles = Arc::new(meridian::profiles::ProfileStore::from_env_or_disk(config_root.clone()));
+    let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap, profiles.clone()));
     let sessions = Arc::new(SessionStore::new());
-    let app = router(runner, sessions);
+    let app = router(runner, sessions, profiles);
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
     tracing::info!("meridian listening on {addr}");

@@ -23,7 +23,7 @@ impl TurnRunner for ToolRunner {
     }
 }
 impl StreamRunner for ToolRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _profile: Option<String>) -> EventStream {
         let (_tx, rx) = mpsc::channel::<Value>(1);
         ReceiverStream::new(rx)
     }
@@ -32,7 +32,7 @@ impl StreamRunner for ToolRunner {
 #[tokio::test]
 async fn surfaces_tool_use_with_stop_reason() {
     let runner = Arc::new(ToolRunner::default());
-    let app = router(runner.clone(), Arc::new(SessionStore::new()));
+    let app = router(runner.clone(), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
     let body = json!({
         "model":"opus",
         "tools":[{"name":"edit_file","description":"Edit","input_schema":{"type":"object"}}],

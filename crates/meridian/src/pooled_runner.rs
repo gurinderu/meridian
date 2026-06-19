@@ -9,6 +9,7 @@ use meridian_transport::mcp::ToolRegistry;
 use meridian_transport::pool::{IsolationKey, Pool};
 
 use crate::error::ProxyError;
+use crate::profiles::ProfileStore;
 use crate::server::{TurnRequest, TurnResult, TurnRunner};
 
 struct NoTools;
@@ -17,15 +18,21 @@ impl ToolRegistry for NoTools {
     fn call(&self, _n: &str, _a: &Value) -> Value { serde_json::json!({}) }
 }
 
+/// Profile id used when a request carries none (no profiles configured).
+fn profile_id(req: &TurnRequest) -> String {
+    req.profile.clone().unwrap_or_else(|| "default".into())
+}
+
 pub struct PooledRunner {
     pool: std::sync::Arc<Pool<factory::CliProcessFactory>>,
     exe: String,
     config_root: PathBuf,
+    profiles: Arc<ProfileStore>,
 }
 
-pub fn pooled_runner(exe: String, config_root: PathBuf, cap: usize) -> PooledRunner {
-    let f = factory::new(exe.clone(), config_root.clone(), Arc::new(NoTools));
-    PooledRunner { pool: std::sync::Arc::new(Pool::new(f, cap)), exe, config_root }
+pub fn pooled_runner(exe: String, config_root: PathBuf, cap: usize, profiles: Arc<ProfileStore>) -> PooledRunner {
+    let f = factory::new_with_resolver(exe.clone(), config_root.clone(), Arc::new(NoTools), profiles.clone());
+    PooledRunner { pool: std::sync::Arc::new(Pool::new(f, cap)), exe, config_root, profiles }
 }
 
 impl TurnRunner for PooledRunner {
@@ -34,7 +41,7 @@ impl TurnRunner for PooledRunner {
             return self.run_passthrough(req).await;
         }
         let key = IsolationKey {
-            profile_id: "default".into(),
+            profile_id: profile_id(&req),
             cwd: "/".into(),
             options_hash: 0,
             resume: req.resume.clone(),
@@ -56,7 +63,8 @@ impl TurnRunner for PooledRunner {
 impl PooledRunner {
     async fn run_passthrough(&self, req: TurnRequest) -> Result<TurnResult, ProxyError> {
         use std::collections::HashMap;
-        let config_dir = self.config_root.join("default");
+        let pid = profile_id(&req);
+        let config_dir = self.config_root.join(&pid);
         let _ = std::fs::create_dir_all(&config_dir);
         let cfg = meridian_transport::spawn::SpawnConfig {
             config_dir,
@@ -65,7 +73,8 @@ impl PooledRunner {
             include_partial_messages: false,
             resume: req.resume.clone(),
             max_turns: Some(3),
-            env_overlay: Default::default(),
+            // Overlay may itself override CLAUDE_CONFIG_DIR (oauth-token profiles).
+            env_overlay: { use meridian_transport::factory::EnvResolver; self.profiles.overlay(&pid) },
         };
         let tools = Arc::new(meridian_transport::passthrough::new(req.tools.clone()));
         let base: HashMap<String, String> = std::env::vars().collect();
@@ -91,11 +100,12 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 impl StreamRunner for PooledRunner {
-    fn run_stream(&self, _model: String, system: Option<String>, prompt: String) -> EventStream {
+    fn run_stream(&self, _model: String, system: Option<String>, prompt: String, profile: Option<String>) -> EventStream {
         let (tx, rx) = mpsc::channel::<Value>(64);
         let pool = self.pool.clone();
         tokio::spawn(async move {
-            let key = IsolationKey { profile_id: "default".into(), cwd: "/".into(), options_hash: 0, resume: None };
+            let pid = profile.unwrap_or_else(|| "default".into());
+            let key = IsolationKey { profile_id: pid, cwd: "/".into(), options_hash: 0, resume: None };
             let mut lease = match pool.acquire(&key).await {
                 Ok(Some(l)) => l,
                 Ok(None) => { let _ = tx.send(error_event("pool at capacity")).await; return; }

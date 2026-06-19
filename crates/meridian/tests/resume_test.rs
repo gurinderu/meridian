@@ -24,7 +24,7 @@ impl TurnRunner for RecordingRunner {
     }
 }
 impl StreamRunner for RecordingRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _profile: Option<String>) -> EventStream {
         let (_tx, rx) = mpsc::channel::<Value>(1);
         ReceiverStream::new(rx)
     }
@@ -41,7 +41,8 @@ async fn post(app: axum::Router, body: Value) {
 async fn second_turn_resumes_and_sends_only_new_user_message() {
     let runner = Arc::new(RecordingRunner::default());
     let sessions = Arc::new(SessionStore::new());
-    let app = || router(runner.clone(), sessions.clone());
+    let profiles = Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into()));
+    let app = || router(runner.clone(), sessions.clone(), profiles.clone());
 
     // Turn 1: single user message -> fresh (resume None), stores sess-A under the post-turn fingerprint.
     post(app(), json!({"model":"opus","messages":[{"role":"user","content":"u1"}]})).await;

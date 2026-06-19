@@ -11,7 +11,7 @@ use meridian::session::SessionStore;
 #[ignore = "requires a live, authenticated `claude` CLI"]
 async fn openai_tool_call_surfaces() {
     let root = std::env::temp_dir().join(format!("meridian-oai-tools-{}", std::process::id()));
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2)), Arc::new(SessionStore::new()));
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())))), Arc::new(SessionStore::new()), std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())));
     let body = json!({
         "model":"sonnet",
         "tools":[{"type":"function","function":{"name":"get_weather","description":"Get the weather for a city","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}],
