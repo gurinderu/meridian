@@ -32,6 +32,8 @@ pub fn router<R: TurnRunner + StreamRunner + 'static>(runner: Arc<R>) -> Router 
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/v1/messages", post(messages::<R>))
+        .route("/v1/chat/completions", post(chat_completions::<R>))
+        .route("/v1/models", get(models))
         .with_state(runner)
 }
 
@@ -57,6 +59,24 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
         Ok(msg) => Json(msg).into_response(),
         Err(e) => e.into_response(),
     }
+}
+
+async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
+    State(runner): State<Arc<R>>,
+    Json(body): Json<Value>,
+) -> axum::response::Response {
+    let (model, system, prompt) = match crate::openai::openai_to_canonical(&body) {
+        Ok(t) => t,
+        Err(e) => return ProxyError::BadRequest(e).into_response(),
+    };
+    match runner.run_turn(model.clone(), system, prompt).await {
+        Ok(msg) => Json(crate::openai::anthropic_to_openai(&msg, &model)).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+async fn models() -> axum::response::Response {
+    Json(crate::openai::model_list()).into_response()
 }
 
 fn extract_system(body: &Value) -> Option<String> {
