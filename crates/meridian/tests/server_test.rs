@@ -3,8 +3,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::{json, Value};
 use tower::ServiceExt; // oneshot
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use meridian::error::ProxyError;
-use meridian::server::{router, TurnRunner};
+use meridian::server::{router, StreamRunner, TurnRunner};
+use meridian::sse::SseStream;
 
 struct FakeRunner;
 impl TurnRunner for FakeRunner {
@@ -14,6 +17,12 @@ impl TurnRunner for FakeRunner {
             "content":[{"type":"text","text":format!("sys={};p={}", system.unwrap_or_default(), prompt)}],
             "stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}
         }))
+    }
+}
+impl StreamRunner for FakeRunner {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> SseStream {
+        let (_tx, rx) = mpsc::channel(1);
+        ReceiverStream::new(rx)
     }
 }
 
