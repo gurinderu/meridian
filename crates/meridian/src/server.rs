@@ -176,8 +176,21 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
         return axum::response::sse::Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx)).into_response();
     }
 
-    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None, tools: Vec::new() }).await {
-        Ok(r) => Json(crate::openai::anthropic_to_openai(&r.message, &model)).into_response(),
+    let mcp_tools = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|ts| crate::openai::openai_tools_to_mcp_defs(ts))
+        .unwrap_or_default();
+
+    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None, tools: mcp_tools }).await {
+        Ok(r) => {
+            let resp = if r.captured_tools.is_empty() {
+                crate::openai::anthropic_to_openai(&r.message, &model)
+            } else {
+                crate::openai::tool_calls_completion(&r.captured_tools, &model)
+            };
+            Json(resp).into_response()
+        }
         Err(e) => e.into_response(),
     }
 }
