@@ -104,6 +104,10 @@ impl StreamRunner for PooledRunner {
         let (tx, rx) = mpsc::channel::<Value>(64);
         let pool = self.pool.clone();
         tokio::spawn(async move {
+            // `profile` is already resolved by the HTTP handler via
+            // ProfileStore::resolve_id; the "default" fallback only applies when
+            // no profiles are configured (mirrors run_turn's profile_id()).
+            // resume is None: the streaming path does not carry a resume token today.
             let pid = profile.unwrap_or_else(|| "default".into());
             let key = IsolationKey { profile_id: pid, cwd: "/".into(), options_hash: 0, resume: None };
             let mut lease = match pool.acquire(&key).await {

@@ -23,7 +23,15 @@ pub async fn spawn(
     base_env: &HashMap<String, String>,
     tools: Arc<dyn ToolRegistry>,
 ) -> std::io::Result<CliProcess> {
+    // env_clear first so build_env's output is the COMPLETE child environment.
+    // Without it, `.envs()` only *adds* to the inherited parent env, so the
+    // STRIP in build_env is ineffective for any var it doesn't re-set: a host
+    // ANTHROPIC_BASE_URL / CLAUDE_CODE_OAUTH_TOKEN / pre-set
+    // CLAUDE_SECURESTORAGE_CONFIG_DIR would leak through and defeat profile
+    // isolation. build_env starts from the full `base_env` snapshot, so PATH,
+    // HOME, etc. are preserved.
     let mut child = Command::new(exe)
+        .env_clear()
         .args(build_args(cfg))
         .envs(build_env(cfg, base_env))
         .stdin(Stdio::piped())

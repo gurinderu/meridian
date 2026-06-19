@@ -70,6 +70,11 @@ impl ProfileStore {
         Self::new(profiles, config_root)
     }
 
+    /// Set the process-wide active profile. NOT safe to drive from per-request
+    /// HTTP handlers: it is shared mutable state across all concurrent requests.
+    /// Request-scoped selection must go through the `x-meridian-profile` header
+    /// (resolve_id), which supersedes this. Intended for a future CLI/management
+    /// command that sets a session default.
     pub fn set_active(&self, id: String) {
         *self.active.lock().unwrap() = Some(id);
     }
