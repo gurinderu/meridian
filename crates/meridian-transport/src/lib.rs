@@ -5,3 +5,4 @@ pub mod spawn;
 pub mod mcp;
 pub mod control;
 pub mod process;
+pub mod pool;
