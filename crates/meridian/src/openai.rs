@@ -116,3 +116,49 @@ pub fn model_list() -> Value {
         .collect();
     json!({ "object": "list", "data": data })
 }
+
+/// Stateful translator from Anthropic stream events to OpenAI
+/// `chat.completion.chunk`s for a single streamed completion.
+pub struct OpenAiChunker {
+    id: String,
+    model: String,
+}
+
+pub fn new_chunker(model: &str) -> OpenAiChunker {
+    OpenAiChunker { id: "chatcmpl-stream".to_string(), model: model.to_string() }
+}
+
+impl OpenAiChunker {
+    fn chunk(&self, delta: Value, finish: Value) -> Value {
+        json!({
+            "id": self.id,
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": self.model,
+            "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }]
+        })
+    }
+
+    /// Translate one Anthropic stream event into 0+ OpenAI chunks (text-only).
+    pub fn push(&mut self, event: &Value) -> Vec<Value> {
+        match event.get("type").and_then(Value::as_str) {
+            Some("message_start") => {
+                if let Some(mid) = event["message"]["id"].as_str() {
+                    self.id = format!("chatcmpl-{mid}");
+                }
+                vec![self.chunk(json!({"role":"assistant","content":""}), Value::Null)]
+            }
+            Some("content_block_delta")
+                if event["delta"]["type"].as_str() == Some("text_delta") =>
+            {
+                let text = event["delta"]["text"].as_str().unwrap_or("");
+                vec![self.chunk(json!({"content": text}), Value::Null)]
+            }
+            Some("message_delta") => {
+                let fr = finish_reason(event["delta"]["stop_reason"].as_str());
+                vec![self.chunk(json!({}), Value::String(fr.to_string()))]
+            }
+            _ => vec![],
+        }
+    }
+}
