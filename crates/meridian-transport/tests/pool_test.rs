@@ -56,3 +56,16 @@ async fn spawn_failure_does_not_leak_a_cap_slot() {
     assert!(pool.acquire(&key("a")).await.is_err()); // still fails, but slot reusable each time
     assert_eq!(pool.live_count(), 0);
 }
+
+#[tokio::test]
+async fn discarded_lease_frees_slot_and_is_not_reused() {
+    let spawned = Arc::new(AtomicUsize::new(0));
+    let pool = Pool::new(CountingFactory { spawned: spawned.clone(), fail: false }, 4);
+    {
+        let mut l = pool.acquire(&key("a")).await.unwrap().unwrap();
+        l.discard();
+    }
+    assert_eq!(pool.live_count(), 0, "discard frees the cap slot");
+    { let _l = pool.acquire(&key("a")).await.unwrap().unwrap(); }
+    assert_eq!(spawned.load(Ordering::SeqCst), 2, "a discarded process must not be reused");
+}

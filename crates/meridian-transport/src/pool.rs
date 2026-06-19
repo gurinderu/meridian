@@ -33,6 +33,7 @@ pub struct Lease<'a, F: ProcessFactory> {
     pool: &'a Pool<F>,
     key: IsolationKey,
     proc: Option<F::Proc>,
+    discard: bool,
 }
 
 impl<F: ProcessFactory> Pool<F> {
@@ -50,7 +51,7 @@ impl<F: ProcessFactory> Pool<F> {
             let mut g = self.inner.lock().unwrap();
             if let Some(p) = g.idle.get_mut(key).and_then(Vec::pop) {
                 g.live += 1;
-                return Ok(Some(Lease { pool: self, key: key.clone(), proc: Some(p) }));
+                return Ok(Some(Lease { pool: self, key: key.clone(), proc: Some(p), discard: false }));
             }
             if g.live >= self.global_cap {
                 return Ok(None);
@@ -59,7 +60,7 @@ impl<F: ProcessFactory> Pool<F> {
         }
         // Phase 2: spawn outside the lock; on failure, give the slot back.
         match self.factory.spawn(key).await {
-            Ok(p) => Ok(Some(Lease { pool: self, key: key.clone(), proc: Some(p) })),
+            Ok(p) => Ok(Some(Lease { pool: self, key: key.clone(), proc: Some(p), discard: false })),
             Err(e) => {
                 self.inner.lock().unwrap().live -= 1;
                 Err(e)
@@ -72,18 +73,34 @@ impl<F: ProcessFactory> Pool<F> {
         g.live -= 1;
         g.idle.entry(key).or_default().push(proc);
     }
+
+    fn drop_one(&self) {
+        self.inner.lock().unwrap().live -= 1;
+    }
 }
 
 impl<'a, F: ProcessFactory> Lease<'a, F> {
     pub fn proc(&mut self) -> &mut F::Proc {
         self.proc.as_mut().expect("lease still holds a process")
     }
+
+    /// Mark this lease so its process is NOT returned to the warm idle set on
+    /// drop. Use after the process has been shut down / is no longer reusable.
+    /// The global-cap slot is still freed.
+    pub fn discard(&mut self) {
+        self.discard = true;
+    }
 }
 
 impl<'a, F: ProcessFactory> Drop for Lease<'a, F> {
     fn drop(&mut self) {
         if let Some(p) = self.proc.take() {
-            self.pool.release(self.key.clone(), p);
+            if self.discard {
+                self.pool.drop_one();
+                drop(p);
+            } else {
+                self.pool.release(self.key.clone(), p);
+            }
         }
     }
 }

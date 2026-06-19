@@ -36,16 +36,32 @@ impl TurnRunner for PooledRunner {
             .map_err(|e| ProxyError::Upstream(format!("spawn failed: {e}")))?
             .ok_or_else(|| ProxyError::Upstream("pool at capacity".into()))?;
 
-        let full = match system {
-            Some(s) if !s.is_empty() => format!("{s}\n\n{prompt}"),
-            _ => prompt,
-        };
-        lease.proc().send_user_turn(&full).await
-            .map_err(|e| ProxyError::Upstream(format!("write failed: {e}")))?;
+        let result = run_one_turn(lease.proc(), system, prompt).await;
+        lease.proc().shutdown().await;
+        lease.discard(); // a shut-down process must not return to the warm idle set
+        result
+    }
+}
 
+/// Drives one prompt to completion on an already-acquired process. The caller
+/// is responsible for shutting the process down and discarding the lease.
+async fn run_one_turn(
+    proc: &mut meridian_transport::process::CliProcess,
+    system: Option<String>,
+    prompt: String,
+) -> Result<Value, ProxyError> {
+    let full = match system {
+        Some(s) if !s.is_empty() => format!("{s}\n\n{prompt}"),
+        _ => prompt,
+    };
+    proc.send_user_turn(&full)
+        .await
+        .map_err(|e| ProxyError::Upstream(format!("write failed: {e}")))?;
+
+    let collect = async {
         let mut last_message: Option<Value> = None;
         let mut stop_reason: Option<String> = None;
-        while let Some(ev) = lease.proc().next_event().await {
+        while let Some(ev) = proc.next_event().await {
             match ev {
                 CliMessage::Assistant { message, .. } => last_message = Some(message),
                 CliMessage::Result { raw, .. } => {
@@ -55,13 +71,18 @@ impl TurnRunner for PooledRunner {
                 _ => {}
             }
         }
-        lease.proc().shutdown().await;
+        (last_message, stop_reason)
+    };
 
-        let mut msg = last_message
-            .ok_or_else(|| ProxyError::Upstream("no assistant message produced".into()))?;
-        if let (Some(obj), Some(sr)) = (msg.as_object_mut(), stop_reason) {
-            obj.insert("stop_reason".into(), Value::String(sr));
-        }
-        Ok(msg)
+    let (last_message, stop_reason) =
+        tokio::time::timeout(std::time::Duration::from_secs(300), collect)
+            .await
+            .map_err(|_| ProxyError::Upstream("upstream timeout".into()))?;
+
+    let mut msg = last_message
+        .ok_or_else(|| ProxyError::Upstream("no assistant message produced".into()))?;
+    if let (Some(obj), Some(sr)) = (msg.as_object_mut(), stop_reason) {
+        obj.insert("stop_reason".into(), Value::String(sr));
     }
+    Ok(msg)
 }
