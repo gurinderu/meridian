@@ -38,17 +38,31 @@ pub trait StreamRunner: Send + Sync {
     ) -> crate::sse::EventStream;
 }
 
-pub fn router<R: TurnRunner + StreamRunner + 'static>(runner: Arc<R>) -> Router {
+pub struct AppState<R> {
+    pub runner: Arc<R>,
+    pub sessions: Arc<crate::session::SessionStore>,
+}
+
+impl<R> Clone for AppState<R> {
+    fn clone(&self) -> Self {
+        AppState { runner: self.runner.clone(), sessions: self.sessions.clone() }
+    }
+}
+
+pub fn router<R: TurnRunner + StreamRunner + 'static>(
+    runner: Arc<R>,
+    sessions: Arc<crate::session::SessionStore>,
+) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/v1/messages", post(messages::<R>))
         .route("/v1/chat/completions", post(chat_completions::<R>))
         .route("/v1/models", get(models))
-        .with_state(runner)
+        .with_state(AppState { runner, sessions })
 }
 
 async fn messages<R: TurnRunner + StreamRunner + 'static>(
-    State(runner): State<Arc<R>>,
+    State(state): State<AppState<R>>,
     Json(body): Json<Value>,
 ) -> axum::response::Response {
     let messages = match body.get("messages").and_then(Value::as_array).filter(|a| !a.is_empty()) {
@@ -57,25 +71,57 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
     };
     let model = body.get("model").and_then(Value::as_str).unwrap_or("sonnet").to_string();
     let system = extract_system(&body);
-    let prompt = match extract_last_user_text(messages) {
-        Some(p) => p,
-        None => return ProxyError::BadRequest("no user message text found".into()).into_response(),
-    };
 
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
+        let prompt = match extract_last_user_text(messages) {
+            Some(p) => p,
+            None => return ProxyError::BadRequest("no user message text found".into()).into_response(),
+        };
         use tokio_stream::StreamExt;
-        let events = runner.run_stream(model, system, prompt);
+        let events = state.runner.run_stream(model, system, prompt);
         let sse = events.map(|v| Ok::<_, std::convert::Infallible>(crate::sse::sse_event(&v)));
         return axum::response::sse::Sse::new(sse).into_response();
     }
-    match runner.run_turn(TurnRequest { model, system, prompt, resume: None }).await {
-        Ok(r) => Json(r.message).into_response(),
+
+    // Non-streaming: resume-aware path
+    let last_user_idx = messages.iter().rposition(|m| m.get("role").and_then(Value::as_str) == Some("user"));
+    let last_user_idx = match last_user_idx {
+        Some(i) => i,
+        None => return ProxyError::BadRequest("no user message found".into()).into_response(),
+    };
+    let prefix = &messages[..last_user_idx];
+    let resume = state.sessions.get(&crate::session::fingerprint(prefix));
+
+    // On resume, send only the last user message; otherwise flatten the whole conversation.
+    let prompt = if resume.is_some() {
+        crate::session::message_text_pub(&messages[last_user_idx])
+    } else {
+        messages.iter()
+            .map(|m| format!("{}: {}", m.get("role").and_then(Value::as_str).unwrap_or(""), crate::session::message_text_pub(m)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    match state.runner.run_turn(TurnRequest { model, system, prompt, resume }).await {
+        Ok(r) => {
+            if let Some(sid) = r.session_id {
+                // Store under the fingerprint of the conversation INCLUDING our reply,
+                // so the client's next turn (which echoes our reply) hits this session.
+                let reply_text = r.message.get("content").and_then(Value::as_array)
+                    .map(|b| b.iter().filter_map(|x| x.get("text").and_then(Value::as_str)).collect::<Vec<_>>().concat())
+                    .unwrap_or_default();
+                let mut convo: Vec<Value> = messages.to_vec();
+                convo.push(serde_json::json!({"role":"assistant","content":reply_text}));
+                state.sessions.insert(crate::session::fingerprint(&convo), sid);
+            }
+            Json(r.message).into_response()
+        }
         Err(e) => e.into_response(),
     }
 }
 
 async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
-    State(runner): State<Arc<R>>,
+    State(state): State<AppState<R>>,
     Json(body): Json<Value>,
 ) -> axum::response::Response {
     let (model, system, prompt) = match crate::openai::openai_to_canonical(&body) {
@@ -86,7 +132,7 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
         use tokio_stream::StreamExt;
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::response::sse::Event, std::convert::Infallible>>(64);
-        let mut events = runner.run_stream(model.clone(), system, prompt);
+        let mut events = state.runner.run_stream(model.clone(), system, prompt);
         let model2 = model.clone();
         tokio::spawn(async move {
             let mut chunker = crate::openai::new_chunker(&model2);
@@ -102,7 +148,7 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
         return axum::response::sse::Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx)).into_response();
     }
 
-    match runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None }).await {
+    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None }).await {
         Ok(r) => Json(crate::openai::anthropic_to_openai(&r.message, &model)).into_response(),
         Err(e) => e.into_response(),
     }

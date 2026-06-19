@@ -7,13 +7,15 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use meridian::pooled_runner::pooled_runner;
 use meridian::server::router;
+use meridian::session::SessionStore;
 
 #[tokio::test]
 #[ignore = "requires a live, authenticated `claude` CLI"]
 async fn end_to_end_messages() {
     let root = std::env::temp_dir().join(format!("meridian-e2e-{}", std::process::id()));
     let runner = Arc::new(pooled_runner("claude".into(), root, 2));
-    let app = router(runner);
+    let sessions = Arc::new(SessionStore::new());
+    let app = router(runner, sessions);
     let body = json!({"model":"sonnet","messages":[{"role":"user","content":"Reply with exactly: OK"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages")

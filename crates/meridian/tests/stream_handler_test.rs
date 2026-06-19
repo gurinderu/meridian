@@ -6,6 +6,7 @@ use tower::ServiceExt;
 use tokio::sync::mpsc;
 use meridian::error::ProxyError;
 use meridian::server::{router, StreamRunner, TurnRunner};
+use meridian::session::SessionStore;
 use meridian::sse::EventStream;
 
 struct FakeRunner;
@@ -28,7 +29,7 @@ impl StreamRunner for FakeRunner {
 
 #[tokio::test]
 async fn stream_true_returns_sse_with_events() {
-    let app = router(Arc::new(FakeRunner));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
     let body = json!({"model":"sonnet","stream":true,"messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages").header("content-type","application/json")
@@ -46,7 +47,7 @@ async fn stream_true_returns_sse_with_events() {
 
 #[tokio::test]
 async fn stream_false_still_returns_json() {
-    let app = router(Arc::new(FakeRunner));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
     let body = json!({"model":"sonnet","messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages").header("content-type","application/json")

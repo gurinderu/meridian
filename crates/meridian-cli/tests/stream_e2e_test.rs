@@ -33,8 +33,9 @@ async fn http_stream_true_streams_sse() {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
     use meridian::server::router;
+    use meridian::session::SessionStore;
     let root = std::env::temp_dir().join(format!("meridian-httpstream-{}", std::process::id()));
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2)));
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2)), Arc::new(SessionStore::new()));
     let body = serde_json::json!({"model":"sonnet","stream":true,"messages":[{"role":"user","content":"Reply with exactly: OK"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages").header("content-type","application/json")

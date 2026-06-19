@@ -5,6 +5,11 @@ use std::sync::Mutex;
 use serde_json::Value;
 
 fn message_text(m: &Value) -> String {
+    message_text_pub(m)
+}
+
+/// Extract the text content from a message value.
+pub fn message_text_pub(m: &Value) -> String {
     match m.get("content") {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Array(parts)) => parts

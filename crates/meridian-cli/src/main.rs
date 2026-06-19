@@ -23,7 +23,8 @@ async fn main() {
     let args = Args::parse();
     let config_root = std::env::temp_dir().join("meridian-config");
     let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap));
-    let app = router(runner);
+    let sessions = std::sync::Arc::new(meridian::session::SessionStore::new());
+    let app = router(runner, sessions);
 
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");

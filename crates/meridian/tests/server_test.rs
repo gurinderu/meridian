@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use meridian::error::ProxyError;
 use meridian::server::{router, StreamRunner, TurnRunner};
+use meridian::session::SessionStore;
 use meridian::sse::EventStream;
 
 struct FakeRunner;
@@ -29,7 +30,7 @@ impl StreamRunner for FakeRunner {
 
 #[tokio::test]
 async fn messages_endpoint_returns_assistant_message() {
-    let app = router(Arc::new(FakeRunner));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
     let body = json!({"model":"opus","system":"be brief","messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages")
@@ -41,12 +42,12 @@ async fn messages_endpoint_returns_assistant_message() {
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["role"], "assistant");
     assert_eq!(v["model"], "opus");
-    assert_eq!(v["content"][0]["text"], "sys=be brief;p=hi");
+    assert_eq!(v["content"][0]["text"], "sys=be brief;p=user: hi");
 }
 
 #[tokio::test]
 async fn empty_messages_is_400() {
-    let app = router(Arc::new(FakeRunner));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()));
     let body = json!({"messages":[]});
     let resp = app.oneshot(
         Request::post("/v1/messages")
