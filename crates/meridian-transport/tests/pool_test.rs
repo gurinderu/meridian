@@ -16,7 +16,7 @@ impl ProcessFactory for CountingFactory {
 }
 
 fn key(p: &str) -> IsolationKey {
-    IsolationKey { profile_id: p.into(), cwd: "/w".into(), options_hash: 0 }
+    IsolationKey { profile_id: p.into(), cwd: "/w".into(), options_hash: 0, resume: None }
 }
 
 #[tokio::test]

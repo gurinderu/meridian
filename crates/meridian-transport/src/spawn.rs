@@ -6,6 +6,7 @@ pub struct SpawnConfig {
     pub model: Option<String>,
     pub mcp_config: Option<serde_json::Value>,
     pub include_partial_messages: bool,
+    pub resume: Option<String>,
 }
 
 /// Confirmed base flags (live CLI + spike). Isolation is via env/SDK options,
@@ -23,6 +24,10 @@ pub fn build_args(cfg: &SpawnConfig) -> Vec<String> {
     if let Some(m) = &cfg.model {
         a.push("--model".into());
         a.push(m.clone());
+    }
+    if let Some(r) = &cfg.resume {
+        a.push("--resume".into());
+        a.push(r.clone());
     }
     if let Some(mcp) = &cfg.mcp_config {
         a.push("--mcp-config".into());

@@ -17,7 +17,7 @@ async fn pooled_real_process_runs_a_turn() {
     let root = std::env::temp_dir().join(format!("meridian-factory-{}", std::process::id()));
     let f = factory::new("claude", root, Arc::new(NoTools));
     let pool = Pool::new(f, 2);
-    let key = IsolationKey { profile_id: "default".into(), cwd: "/".into(), options_hash: 0 };
+    let key = IsolationKey { profile_id: "default".into(), cwd: "/".into(), options_hash: 0, resume: None };
 
     let mut lease = pool.acquire(&key).await.unwrap().unwrap();
     lease.proc().send_user_turn("Reply with exactly: OK").await.unwrap();

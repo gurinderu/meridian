@@ -6,6 +6,7 @@ pub struct IsolationKey {
     pub profile_id: String,
     pub cwd: String,
     pub options_hash: u64,
+    pub resume: Option<String>,
 }
 
 pub trait ProcessFactory: Send + Sync {

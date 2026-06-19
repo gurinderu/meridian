@@ -8,6 +8,7 @@ fn cfg() -> SpawnConfig {
         model: Some("claude-opus-4-8".into()),
         mcp_config: Some(serde_json::json!({"mcpServers":{}})),
         include_partial_messages: true,
+        resume: None,
     }
 }
 
@@ -34,4 +35,15 @@ fn env_isolates_config_dir_and_strips_secrets() {
     // Realigns the keychain key so the default OAuth token is found under an
     // isolated config dir -> auth succeeds -> streaming partials flow.
     assert_eq!(env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR").map(String::as_str), Some(""));
+}
+
+#[test]
+fn args_include_resume_when_set() {
+    let mut c = cfg();
+    c.resume = Some("sess-xyz".into());
+    let a = build_args(&c);
+    assert!(a.windows(2).any(|w| w[0] == "--resume" && w[1] == "sess-xyz"), "missing --resume in {a:?}");
+    // and absent when None
+    let a2 = build_args(&cfg());
+    assert!(!a2.iter().any(|x| x == "--resume"), "--resume must be absent when None");
 }

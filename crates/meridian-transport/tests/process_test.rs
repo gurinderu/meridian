@@ -23,7 +23,7 @@ async fn live_streaming_turn_reaches_result() {
     std::fs::create_dir_all(&dir).unwrap();
     let cfg = SpawnConfig { config_dir: dir, model: None,
         mcp_config: Some(json!({"mcpServers":{"spike":{"type":"sdk","name":"spike"}}})),
-        include_partial_messages: false };
+        include_partial_messages: false, resume: None };
     let base: HashMap<String,String> = std::env::vars().collect();
     let mut p = spawn("claude", &cfg, &base, Arc::new(PingTools)).await.unwrap();
     p.send_user_turn("Reply with exactly: PONG").await.unwrap();
