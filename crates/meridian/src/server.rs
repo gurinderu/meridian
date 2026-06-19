@@ -104,8 +104,29 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
             .join("\n")
     };
 
-    match state.runner.run_turn(TurnRequest { model, system, prompt, resume, tools: Vec::new() }).await {
+    let mcp_tools = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|ts| crate::tools::anthropic_tools_to_mcp_defs(ts))
+        .unwrap_or_default();
+
+    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume, tools: mcp_tools }).await {
         Ok(r) => {
+            let response = if r.captured_tools.is_empty() {
+                r.message.clone()
+            } else {
+                let blocks: Vec<Value> = r.captured_tools.iter().map(|c| serde_json::json!({
+                    "type": "tool_use",
+                    "id": c.get("id").cloned().unwrap_or(Value::Null),
+                    "name": crate::tools::strip_oc_prefix(c.get("name").and_then(Value::as_str).unwrap_or("")),
+                    "input": c.get("input").cloned().unwrap_or_else(|| serde_json::json!({})),
+                })).collect();
+                serde_json::json!({
+                    "id": "msg_meridian", "type": "message", "role": "assistant", "model": model,
+                    "content": blocks, "stop_reason": "tool_use", "stop_sequence": Value::Null,
+                    "usage": r.message.get("usage").cloned().unwrap_or_else(|| serde_json::json!({}))
+                })
+            };
             if let Some(sid) = r.session_id {
                 // Store under the fingerprint of the conversation INCLUDING our reply,
                 // so the client's next turn (which echoes our reply) hits this session.
@@ -116,7 +137,7 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
                 convo.push(serde_json::json!({"role":"assistant","content":reply_text}));
                 state.sessions.insert(crate::session::fingerprint(&convo), sid);
             }
-            Json(r.message).into_response()
+            Json(response).into_response()
         }
         Err(e) => e.into_response(),
     }
