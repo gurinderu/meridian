@@ -18,12 +18,12 @@ impl ToolRegistry for NoTools {
 }
 
 pub struct PooledRunner {
-    pool: Pool<factory::CliProcessFactory>,
+    pool: std::sync::Arc<Pool<factory::CliProcessFactory>>,
 }
 
 pub fn pooled_runner(exe: String, config_root: PathBuf, cap: usize) -> PooledRunner {
     let f = factory::new(exe, config_root, Arc::new(NoTools));
-    PooledRunner { pool: Pool::new(f, cap) }
+    PooledRunner { pool: std::sync::Arc::new(Pool::new(f, cap)) }
 }
 
 impl TurnRunner for PooledRunner {
@@ -41,6 +41,63 @@ impl TurnRunner for PooledRunner {
         lease.discard(); // a shut-down process must not return to the warm idle set
         result
     }
+}
+
+use crate::server::StreamRunner;
+use crate::sse::{sse_event, SseStream};
+use axum::response::sse::Event;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+
+impl StreamRunner for PooledRunner {
+    fn run_stream(&self, _model: String, system: Option<String>, prompt: String) -> SseStream {
+        let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(64);
+        let pool = self.pool.clone();
+        tokio::spawn(async move {
+            let key = IsolationKey { profile_id: "default".into(), cwd: "/".into(), options_hash: 0 };
+            let mut lease = match pool.acquire(&key).await {
+                Ok(Some(l)) => l,
+                Ok(None) => { let _ = tx.send(Ok(error_event("pool at capacity"))).await; return; }
+                Err(e) => { let _ = tx.send(Ok(error_event(&format!("spawn failed: {e}")))).await; return; }
+            };
+
+            let full = match system {
+                Some(s) if !s.is_empty() => format!("{s}\n\n{prompt}"),
+                _ => prompt,
+            };
+            if let Err(e) = lease.proc().send_user_turn(&full).await {
+                let _ = tx.send(Ok(error_event(&format!("write failed: {e}")))).await;
+                lease.proc().shutdown().await;
+                lease.discard();
+                return;
+            }
+
+            let pump = async {
+                while let Some(ev) = lease.proc().next_event().await {
+                    match ev {
+                        CliMessage::StreamEvent { event, .. }
+                            if tx.send(Ok(sse_event(&event))).await.is_err() =>
+                        {
+                            break; // client disconnected
+                        }
+                        CliMessage::StreamEvent { .. } => {}
+                        CliMessage::Result { .. } => break,
+                        _ => {}
+                    }
+                }
+            };
+            if tokio::time::timeout(std::time::Duration::from_secs(300), pump).await.is_err() {
+                let _ = tx.send(Ok(error_event("upstream timeout"))).await;
+            }
+            lease.proc().shutdown().await;
+            lease.discard();
+        });
+        ReceiverStream::new(rx)
+    }
+}
+
+fn error_event(message: &str) -> Event {
+    sse_event(&serde_json::json!({"type":"error","error":{"type":"api_error","message":message}}))
 }
 
 /// Drives one prompt to completion on an already-acquired process. The caller

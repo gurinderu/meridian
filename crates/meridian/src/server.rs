@@ -17,6 +17,16 @@ pub trait TurnRunner: Send + Sync {
     ) -> impl std::future::Future<Output = Result<Value, ProxyError>> + Send;
 }
 
+/// Runs one prompt and streams Anthropic SSE events as they arrive.
+pub trait StreamRunner: Send + Sync {
+    fn run_stream(
+        &self,
+        model: String,
+        system: Option<String>,
+        prompt: String,
+    ) -> crate::sse::SseStream;
+}
+
 pub fn router<R: TurnRunner + 'static>(runner: Arc<R>) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
