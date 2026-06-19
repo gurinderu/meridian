@@ -9,6 +9,7 @@ fn cfg() -> SpawnConfig {
         mcp_config: Some(serde_json::json!({"mcpServers":{}})),
         include_partial_messages: true,
         resume: None,
+        max_turns: None,
     }
 }
 
@@ -46,4 +47,11 @@ fn args_include_resume_when_set() {
     // and absent when None
     let a2 = build_args(&cfg());
     assert!(!a2.iter().any(|x| x == "--resume"), "--resume must be absent when None");
+}
+
+#[test]
+fn args_include_max_turns_when_set() {
+    let mut c = cfg();
+    c.max_turns = Some(3);
+    assert!(build_args(&c).windows(2).any(|w| w[0]=="--max-turns" && w[1]=="3"));
 }

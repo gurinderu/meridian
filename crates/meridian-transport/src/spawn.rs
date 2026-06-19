@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use serde_json::{json, Value};
 
 pub struct SpawnConfig {
     pub config_dir: PathBuf,
@@ -7,6 +8,7 @@ pub struct SpawnConfig {
     pub mcp_config: Option<serde_json::Value>,
     pub include_partial_messages: bool,
     pub resume: Option<String>,
+    pub max_turns: Option<u32>,
 }
 
 /// Confirmed base flags (live CLI + spike). Isolation is via env/SDK options,
@@ -28,6 +30,10 @@ pub fn build_args(cfg: &SpawnConfig) -> Vec<String> {
     if let Some(r) = &cfg.resume {
         a.push("--resume".into());
         a.push(r.clone());
+    }
+    if let Some(n) = cfg.max_turns {
+        a.push("--max-turns".into());
+        a.push(n.to_string());
     }
     if let Some(mcp) = &cfg.mcp_config {
         a.push("--mcp-config".into());
@@ -55,4 +61,24 @@ pub fn build_env(cfg: &SpawnConfig, base: &HashMap<String, String>) -> HashMap<S
     // instead; that bypasses the keychain entirely — a profiles-phase concern.)
     env.insert("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), String::new());
     env
+}
+
+/// Build the `initialize` control_request for a registry, or `None` when it
+/// wants neither in-process MCP servers nor a PreToolUse hook.
+pub fn build_initialize(tools: &dyn crate::mcp::ToolRegistry) -> Option<Value> {
+    let servers = tools.sdk_mcp_servers();
+    let wants_hook = tools.wants_pre_tool_use_hook();
+    if servers.is_empty() && !wants_hook {
+        return None;
+    }
+    let mut req = json!({ "subtype": "initialize" });
+    if !servers.is_empty() {
+        req["sdkMcpServers"] = json!(servers);
+    }
+    if wants_hook {
+        req["hooks"] = json!({
+            "PreToolUse": [{ "matcher": "", "hookCallbackIds": ["pre-tool-use"], "timeout": 60 }]
+        });
+    }
+    Some(json!({ "type": "control_request", "request_id": "meridian-init", "request": req }))
 }

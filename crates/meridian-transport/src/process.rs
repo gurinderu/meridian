@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::codec::{parse_line, CliMessage};
 use crate::control::handle_control_request;
 use crate::mcp::ToolRegistry;
-use crate::spawn::{build_args, build_env, SpawnConfig};
+use crate::spawn::{build_args, build_env, build_initialize, SpawnConfig};
 
 pub struct CliProcess {
     child: Child,
@@ -50,6 +50,7 @@ pub async fn spawn(
     // Reader task: parse NDJSON, answer control_requests, forward the rest.
     let (events_tx, events_rx) = mpsc::channel::<CliMessage>(256);
     let writer = stdin_tx.clone();
+    let tools_for_reader = tools.clone();
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = lines.next_line().await {
@@ -58,7 +59,7 @@ pub async fn spawn(
             }
             let Ok(msg) = parse_line(&line) else { continue };
             if let CliMessage::ControlRequest { request_id, request } = &msg {
-                let resp = handle_control_request(request_id, request, tools.as_ref());
+                let resp = handle_control_request(request_id, request, tools_for_reader.as_ref());
                 let _ = writer.send(resp.to_string()).await;
                 continue;
             }
@@ -68,6 +69,11 @@ pub async fn spawn(
             }
         }
     });
+
+    // Send initialize if the registry wants it.
+    if let Some(init) = build_initialize(tools.as_ref()) {
+        let _ = stdin_tx.send(init.to_string()).await;
+    }
 
     Ok(CliProcess { child, stdin_tx, events_rx })
 }
