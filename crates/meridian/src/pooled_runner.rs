@@ -128,7 +128,14 @@ impl StreamRunner for PooledRunner {
                             let disconnected = tx.send(event).await.is_err();
                             if disconnected { break; } // client disconnected
                         }
-                        CliMessage::Result { .. } => break,
+                        CliMessage::Result { raw, result, .. } => {
+                            // Surface an upstream failure to the SSE client instead
+                            // of silently ending the stream (mirrors run_one_turn).
+                            if let Some(msg) = upstream_error_from_result(&raw, result) {
+                                let _ = tx.send(error_event(&msg)).await;
+                            }
+                            break;
+                        }
                         _ => {}
                     }
                 }
@@ -145,6 +152,18 @@ impl StreamRunner for PooledRunner {
 
 fn error_event(message: &str) -> Value {
     json!({"type":"error","error":{"type":"api_error","message":message}})
+}
+
+/// Map a CLI `result` event to an upstream error, if it signals one. The CLI
+/// reports auth / network / rate-limit failures with `is_error: true` and the
+/// human-readable text in `result`; without this the error text would leak
+/// through as an ordinary 200 turn. Returns `None` for a healthy result.
+fn upstream_error_from_result(raw: &Value, result: Option<String>) -> Option<String> {
+    if raw.get("is_error").and_then(Value::as_bool) == Some(true) {
+        Some(result.unwrap_or_else(|| "upstream error".into()))
+    } else {
+        None
+    }
 }
 
 /// Drives one prompt to completion on an already-acquired process. The caller
@@ -166,24 +185,30 @@ async fn run_one_turn(
         let mut last_message: Option<Value> = None;
         let mut stop_reason: Option<String> = None;
         let mut session_id: Option<String> = None;
+        let mut upstream_error: Option<String> = None;
         while let Some(ev) = proc.next_event().await {
             match ev {
                 CliMessage::Init { session_id: sid, .. } => session_id = Some(sid),
                 CliMessage::Assistant { message, .. } => last_message = Some(message),
-                CliMessage::Result { raw, .. } => {
+                CliMessage::Result { raw, result, .. } => {
                     stop_reason = raw.get("stop_reason").and_then(Value::as_str).map(str::to_string);
+                    upstream_error = upstream_error_from_result(&raw, result);
                     break;
                 }
                 _ => {}
             }
         }
-        (last_message, stop_reason, session_id)
+        (last_message, stop_reason, session_id, upstream_error)
     };
 
-    let (last_message, stop_reason, session_id) =
+    let (last_message, stop_reason, session_id, upstream_error) =
         tokio::time::timeout(std::time::Duration::from_secs(300), collect)
             .await
             .map_err(|_| ProxyError::Upstream("upstream timeout".into()))?;
+
+    if let Some(e) = upstream_error {
+        return Err(ProxyError::Upstream(e));
+    }
 
     let mut msg = last_message
         .ok_or_else(|| ProxyError::Upstream("no assistant message produced".into()))?;
@@ -191,4 +216,34 @@ async fn run_one_turn(
         obj.insert("stop_reason".into(), Value::String(sr));
     }
     Ok(TurnResult { message: msg, session_id, captured_tools: Vec::new() })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::upstream_error_from_result;
+    use serde_json::json;
+
+    #[test]
+    fn is_error_result_becomes_upstream_error() {
+        let raw = json!({"type":"result","subtype":"success","is_error":true,
+                         "result":"API Error: Unable to connect"});
+        assert_eq!(
+            upstream_error_from_result(&raw, Some("API Error: Unable to connect".into())),
+            Some("API Error: Unable to connect".into())
+        );
+    }
+
+    #[test]
+    fn is_error_without_text_falls_back_to_generic() {
+        let raw = json!({"is_error":true});
+        assert_eq!(upstream_error_from_result(&raw, None), Some("upstream error".into()));
+    }
+
+    #[test]
+    fn healthy_result_is_not_an_error() {
+        let raw = json!({"type":"result","subtype":"success","is_error":false});
+        assert_eq!(upstream_error_from_result(&raw, Some("ignored".into())), None);
+        // missing is_error also means success
+        assert_eq!(upstream_error_from_result(&json!({}), None), None);
+    }
 }

@@ -62,9 +62,23 @@ pub fn build_env(cfg: &SpawnConfig, base: &HashMap<String, String>) -> HashMap<S
     // emitted (reverse-engineered from cli.js `m1()`). Setting
     // CLAUDE_SECURESTORAGE_CONFIG_DIR="" realigns the keychain key to the
     // default entry, so auth succeeds and streaming partials flow under an
-    // isolated config dir. (Per-profile auth uses CLAUDE_CODE_OAUTH_TOKEN
-    // instead; that bypasses the keychain entirely — a profiles-phase concern.)
-    env.insert("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), String::new());
+    // isolated config dir.
+    //
+    // BUT: the realignment makes the isolated config dir resolve the HOST's
+    // default OAuth token. That is correct for the default / claude-max path,
+    // where we want host auth. When a profile supplies its OWN credentials
+    // (ANTHROPIC_API_KEY for api profiles, CLAUDE_CODE_OAUTH_TOKEN for
+    // oauth-token profiles), we want the profile's config dir kept ISOLATED from
+    // the host keychain so only the profile's auth is in play. So skip the
+    // realignment whenever the overlay carries explicit auth. (Empirically, in
+    // streaming mode the CLI honors the overlay's ANTHROPIC_BASE_URL/key and does
+    // NOT fall back to host OAuth on failure — an unreachable base_url surfaces as
+    // an `is_error` result, which pooled_runner maps to a non-2xx upstream error.)
+    let overlay_has_auth = cfg.env_overlay.contains_key("ANTHROPIC_API_KEY")
+        || cfg.env_overlay.contains_key("CLAUDE_CODE_OAUTH_TOKEN");
+    if !overlay_has_auth {
+        env.insert("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), String::new());
+    }
     // Profile overlay wins last: survives the strip above and overrides the
     // base CLAUDE_CONFIG_DIR for oauth-token profiles.
     for (k, v) in &cfg.env_overlay {

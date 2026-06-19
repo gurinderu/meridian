@@ -11,7 +11,8 @@ use meridian::session::SessionStore;
 #[ignore = "requires a live, authenticated `claude` CLI"]
 async fn openai_chat_completions_end_to_end() {
     let root = std::env::temp_dir().join(format!("meridian-oai-{}", std::process::id()));
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())))), Arc::new(SessionStore::new()), std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())));
+    let profiles = std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir()));
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone())), Arc::new(SessionStore::new()), profiles);
     let body = json!({"model":"sonnet","messages":[{"role":"user","content":"Reply with exactly: OK"}]});
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")
@@ -28,7 +29,8 @@ async fn openai_chat_completions_end_to_end() {
 #[ignore = "requires a live, authenticated `claude` CLI"]
 async fn openai_chat_completions_streaming_end_to_end() {
     let root = std::env::temp_dir().join(format!("meridian-oai-stream-{}", std::process::id()));
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())))), Arc::new(SessionStore::new()), std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir())));
+    let profiles = std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir()));
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone())), Arc::new(SessionStore::new()), profiles);
     let body = serde_json::json!({"model":"sonnet","stream":true,"messages":[{"role":"user","content":"Reply with exactly: OK"}]});
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")

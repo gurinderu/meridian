@@ -75,6 +75,21 @@ fn env_overlay_is_applied_after_strip_and_wins() {
 }
 
 #[test]
+fn overlay_auth_skips_keychain_realignment() {
+    // An api profile's config dir must stay ISOLATED from the host keychain: the
+    // keychain must NOT be realigned to the host default OAuth token, so only the
+    // profile's own ANTHROPIC_API_KEY is in play.
+    let mut c = cfg();
+    c.env_overlay = HashMap::from([("ANTHROPIC_API_KEY".to_string(), "sk".to_string())]);
+    assert!(!build_env(&c, &HashMap::new()).contains_key("CLAUDE_SECURESTORAGE_CONFIG_DIR"),
+        "api-profile auth must not realign the keychain to the host default OAuth token");
+    // Same for an oauth-token profile: its token governs, not host creds.
+    let mut c2 = cfg();
+    c2.env_overlay = HashMap::from([("CLAUDE_CODE_OAUTH_TOKEN".to_string(), "t".to_string())]);
+    assert!(!build_env(&c2, &HashMap::new()).contains_key("CLAUDE_SECURESTORAGE_CONFIG_DIR"));
+}
+
+#[test]
 fn empty_overlay_preserves_current_build_env() {
     let mut base = HashMap::new();
     base.insert("ANTHROPIC_API_KEY".to_string(), "host-key".to_string());

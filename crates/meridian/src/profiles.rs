@@ -20,7 +20,7 @@ pub enum ProfileType {
     OauthToken,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ProfileConfig {
     pub id: String,
     #[serde(rename = "type", default)]
@@ -33,6 +33,22 @@ pub struct ProfileConfig {
     pub base_url: Option<String>,
     #[serde(rename = "oauthToken", default)]
     pub oauth_token: Option<String>,
+}
+
+/// Manual `Debug` that redacts the secret-bearing fields so a stray
+/// `{:?}` / error chain can never print an api key or OAuth token.
+impl std::fmt::Debug for ProfileConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redact = |o: &Option<String>| o.as_ref().map(|_| "[redacted]");
+        f.debug_struct("ProfileConfig")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("claude_config_dir", &self.claude_config_dir)
+            .field("api_key", &redact(&self.api_key))
+            .field("base_url", &self.base_url)
+            .field("oauth_token", &redact(&self.oauth_token))
+            .finish()
+    }
 }
 
 const DEFAULT_PROFILE_ID: &str = "default";
@@ -103,6 +119,12 @@ impl ProfileStore {
                     // Isolate from host ~/.claude (profiles.ts:201).
                     let dir = self.config_root.join("profiles").join(&p.id);
                     env.insert("CLAUDE_CONFIG_DIR".into(), dir.to_string_lossy().into_owned());
+                } else {
+                    tracing::warn!(
+                        "profile \"{}\" is type oauth-token but has no oauthToken; \
+                         it will fall back to host auth",
+                        p.id
+                    );
                 }
             }
             ProfileType::Api => {
@@ -131,11 +153,23 @@ impl EnvResolver for ProfileStore {
 
 fn load_profiles() -> Option<Vec<ProfileConfig>> {
     if let Ok(raw) = std::env::var("MERIDIAN_PROFILES") {
-        return serde_json::from_str(&raw).ok();
+        return match serde_json::from_str(&raw) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::warn!("MERIDIAN_PROFILES is not valid JSON: {e}; ignoring (no profiles)");
+                None
+            }
+        };
     }
     let path = dirs_config_meridian()?.join("profiles.json");
-    let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
+    let raw = std::fs::read_to_string(&path).ok()?;
+    match serde_json::from_str(&raw) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            tracing::warn!("{} is not valid JSON: {e}; ignoring (no profiles)", path.display());
+            None
+        }
+    }
 }
 
 fn dirs_config_meridian() -> Option<PathBuf> {
