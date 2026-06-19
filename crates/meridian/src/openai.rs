@@ -162,3 +162,47 @@ impl OpenAiChunker {
         }
     }
 }
+
+/// Convert OpenAI request `tools` into in-process MCP tool definitions.
+pub fn openai_tools_to_mcp_defs(tools: &[Value]) -> Vec<Value> {
+    tools
+        .iter()
+        .filter(|t| t.get("type").and_then(Value::as_str) == Some("function"))
+        .filter_map(|t| t.get("function"))
+        .map(|f| {
+            let name = f.get("name").and_then(Value::as_str).unwrap_or("");
+            let description = f
+                .get("description")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(name);
+            let input_schema = f.get("parameters").cloned().unwrap_or_else(|| json!({}));
+            json!({ "name": name, "description": description, "inputSchema": input_schema })
+        })
+        .collect()
+}
+
+/// Build an OpenAI `chat.completion` from captured passthrough tool calls.
+pub fn tool_calls_completion(captured: &[Value], model: &str) -> Value {
+    let tool_calls: Vec<Value> = captured
+        .iter()
+        .map(|c| {
+            let id = c.get("id").and_then(Value::as_str).unwrap_or("call_0");
+            let name = crate::tools::strip_oc_prefix(c.get("name").and_then(Value::as_str).unwrap_or(""));
+            let arguments = c.get("input").map(|i| i.to_string()).unwrap_or_else(|| "{}".to_string());
+            json!({ "id": id, "type": "function", "function": { "name": name, "arguments": arguments } })
+        })
+        .collect();
+    json!({
+        "id": "chatcmpl-meridian",
+        "object": "chat.completion",
+        "created": 0,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": Value::Null, "tool_calls": tool_calls },
+            "finish_reason": "tool_calls"
+        }],
+        "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
+    })
+}
