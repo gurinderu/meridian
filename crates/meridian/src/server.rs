@@ -95,10 +95,15 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
     let resume = state.sessions.get(&crate::session::fingerprint(prefix));
 
     // On resume, send only the last user message; otherwise flatten the whole conversation.
-    let prompt = if resume.is_some() {
-        crate::session::message_text_pub(&messages[last_user_idx])
+    // If the last user message carries tool_result blocks, unwrap them as the prompt first.
+    let last_user = &messages[last_user_idx];
+    let prompt = if let Some(unwrapped) = crate::tools::unwrap_tool_results(last_user) {
+        unwrapped
+    } else if resume.is_some() {
+        crate::session::message_text_pub(last_user)
     } else {
-        messages.iter()
+        messages
+            .iter()
             .map(|m| format!("{}: {}", m.get("role").and_then(Value::as_str).unwrap_or(""), crate::session::message_text_pub(m)))
             .collect::<Vec<_>>()
             .join("\n")
