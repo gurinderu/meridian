@@ -2,3 +2,5 @@
 
 pub mod codec;
 pub mod spawn;
+pub mod mcp;
+pub mod control;
