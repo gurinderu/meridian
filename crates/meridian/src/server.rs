@@ -72,6 +72,26 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
         Ok(t) => t,
         Err(e) => return ProxyError::BadRequest(e).into_response(),
     };
+
+    if body.get("stream").and_then(Value::as_bool) == Some(true) {
+        use tokio_stream::StreamExt;
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::response::sse::Event, std::convert::Infallible>>(64);
+        let mut events = runner.run_stream(model.clone(), system, prompt);
+        let model2 = model.clone();
+        tokio::spawn(async move {
+            let mut chunker = crate::openai::new_chunker(&model2);
+            while let Some(ev) = events.next().await {
+                for c in chunker.push(&ev) {
+                    if tx.send(Ok(axum::response::sse::Event::default().data(c.to_string()))).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            let _ = tx.send(Ok(axum::response::sse::Event::default().data("[DONE]"))).await;
+        });
+        return axum::response::sse::Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx)).into_response();
+    }
+
     match runner.run_turn(model.clone(), system, prompt).await {
         Ok(msg) => Json(crate::openai::anthropic_to_openai(&msg, &model)).into_response(),
         Err(e) => e.into_response(),
