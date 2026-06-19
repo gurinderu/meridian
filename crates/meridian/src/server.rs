@@ -18,14 +18,14 @@ pub trait TurnRunner: Send + Sync {
     ) -> impl std::future::Future<Output = Result<Value, ProxyError>> + Send;
 }
 
-/// Runs one prompt and streams Anthropic SSE events as they arrive.
+/// Runs one prompt and streams raw Anthropic stream-event Values as they arrive.
 pub trait StreamRunner: Send + Sync {
     fn run_stream(
         &self,
         model: String,
         system: Option<String>,
         prompt: String,
-    ) -> crate::sse::SseStream;
+    ) -> crate::sse::EventStream;
 }
 
 pub fn router<R: TurnRunner + StreamRunner + 'static>(runner: Arc<R>) -> Router {
@@ -53,7 +53,10 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
     };
 
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
-        return axum::response::sse::Sse::new(runner.run_stream(model, system, prompt)).into_response();
+        use tokio_stream::StreamExt;
+        let events = runner.run_stream(model, system, prompt);
+        let sse = events.map(|v| Ok::<_, std::convert::Infallible>(crate::sse::sse_event(&v)));
+        return axum::response::sse::Sse::new(sse).into_response();
     }
     match runner.run_turn(model, system, prompt).await {
         Ok(msg) => Json(msg).into_response(),

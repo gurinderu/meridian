@@ -44,42 +44,38 @@ impl TurnRunner for PooledRunner {
 }
 
 use crate::server::StreamRunner;
-use crate::sse::{sse_event, SseStream};
-use axum::response::sse::Event;
+use crate::sse::EventStream;
+use serde_json::json;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 impl StreamRunner for PooledRunner {
-    fn run_stream(&self, _model: String, system: Option<String>, prompt: String) -> SseStream {
-        let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(64);
+    fn run_stream(&self, _model: String, system: Option<String>, prompt: String) -> EventStream {
+        let (tx, rx) = mpsc::channel::<Value>(64);
         let pool = self.pool.clone();
         tokio::spawn(async move {
             let key = IsolationKey { profile_id: "default".into(), cwd: "/".into(), options_hash: 0 };
             let mut lease = match pool.acquire(&key).await {
                 Ok(Some(l)) => l,
-                Ok(None) => { let _ = tx.send(Ok(error_event("pool at capacity"))).await; return; }
-                Err(e) => { let _ = tx.send(Ok(error_event(&format!("spawn failed: {e}")))).await; return; }
+                Ok(None) => { let _ = tx.send(error_event("pool at capacity")).await; return; }
+                Err(e) => { let _ = tx.send(error_event(&format!("spawn failed: {e}"))).await; return; }
             };
-
             let full = match system {
                 Some(s) if !s.is_empty() => format!("{s}\n\n{prompt}"),
                 _ => prompt,
             };
             if let Err(e) = lease.proc().send_user_turn(&full).await {
-                let _ = tx.send(Ok(error_event(&format!("write failed: {e}")))).await;
+                let _ = tx.send(error_event(&format!("write failed: {e}"))).await;
                 lease.proc().shutdown().await;
                 lease.discard();
                 return;
             }
-
             let pump = async {
                 while let Some(ev) = lease.proc().next_event().await {
                     match ev {
                         CliMessage::StreamEvent { event, .. } => {
-                            let send_err = tx.send(Ok(sse_event(&event))).await.is_err();
-                            if send_err {
-                                break; // client disconnected
-                            }
+                            let disconnected = tx.send(event).await.is_err();
+                            if disconnected { break; } // client disconnected
                         }
                         CliMessage::Result { .. } => break,
                         _ => {}
@@ -87,7 +83,7 @@ impl StreamRunner for PooledRunner {
                 }
             };
             if tokio::time::timeout(std::time::Duration::from_secs(300), pump).await.is_err() {
-                let _ = tx.send(Ok(error_event("upstream timeout"))).await;
+                let _ = tx.send(error_event("upstream timeout")).await;
             }
             lease.proc().shutdown().await;
             lease.discard();
@@ -96,8 +92,8 @@ impl StreamRunner for PooledRunner {
     }
 }
 
-fn error_event(message: &str) -> Event {
-    sse_event(&serde_json::json!({"type":"error","error":{"type":"api_error","message":message}}))
+fn error_event(message: &str) -> Value {
+    json!({"type":"error","error":{"type":"api_error","message":message}})
 }
 
 /// Drives one prompt to completion on an already-acquired process. The caller

@@ -5,10 +5,9 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use axum::response::sse::Event;
 use meridian::error::ProxyError;
 use meridian::server::{router, StreamRunner, TurnRunner};
-use meridian::sse::SseStream;
+use meridian::sse::EventStream;
 
 struct FakeRunner;
 impl TurnRunner for FakeRunner {
@@ -21,8 +20,8 @@ impl TurnRunner for FakeRunner {
     }
 }
 impl StreamRunner for FakeRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> SseStream {
-        let (_tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(1);
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
+        let (_tx, rx) = mpsc::channel::<serde_json::Value>(1);
         ReceiverStream::new(rx)
     }
 }

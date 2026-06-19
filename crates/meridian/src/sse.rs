@@ -13,7 +13,8 @@ pub fn sse_event(event: &Value) -> Event {
     Event::default().event(name).data(data)
 }
 
-/// The SSE body stream produced by a `StreamRunner`. Errors are surfaced as
-/// in-band `error` SSE events, so the stream item itself is infallible.
-pub type SseStream =
-    tokio_stream::wrappers::ReceiverStream<Result<Event, std::convert::Infallible>>;
+/// A stream of raw Anthropic stream-event objects (the `.event` of each CLI
+/// `stream_event`, or a synthetic `{"type":"error",...}`). Handlers frame these
+/// into the wire format they serve (Anthropic SSE or OpenAI chunks).
+pub type EventStream =
+    tokio_stream::wrappers::ReceiverStream<serde_json::Value>;

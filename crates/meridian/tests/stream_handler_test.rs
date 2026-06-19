@@ -4,11 +4,9 @@ use axum::http::{Request, StatusCode};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
-use axum::response::sse::Event;
 use meridian::error::ProxyError;
 use meridian::server::{router, StreamRunner, TurnRunner};
-use meridian::sse::{sse_event, SseStream};
+use meridian::sse::EventStream;
 
 struct FakeRunner;
 impl TurnRunner for FakeRunner {
@@ -17,13 +15,13 @@ impl TurnRunner for FakeRunner {
     }
 }
 impl StreamRunner for FakeRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> SseStream {
-        let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(8);
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
+        let (tx, rx) = mpsc::channel::<serde_json::Value>(8);
         tokio::spawn(async move {
-            let _ = tx.send(Ok(sse_event(&json!({"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}})))).await;
-            let _ = tx.send(Ok(sse_event(&json!({"type":"message_stop"})))).await;
+            let _ = tx.send(serde_json::json!({"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}})).await;
+            let _ = tx.send(serde_json::json!({"type":"message_stop"})).await;
         });
-        ReceiverStream::new(rx)
+        tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 }
 

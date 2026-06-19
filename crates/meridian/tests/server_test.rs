@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use meridian::error::ProxyError;
 use meridian::server::{router, StreamRunner, TurnRunner};
-use meridian::sse::SseStream;
+use meridian::sse::EventStream;
 
 struct FakeRunner;
 impl TurnRunner for FakeRunner {
@@ -20,7 +20,7 @@ impl TurnRunner for FakeRunner {
     }
 }
 impl StreamRunner for FakeRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> SseStream {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String) -> EventStream {
         let (_tx, rx) = mpsc::channel(1);
         ReceiverStream::new(rx)
     }
