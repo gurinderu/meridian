@@ -68,3 +68,13 @@ fn profiles_json_is_written_0600() {
     assert_eq!(mode, 0o600, "profiles.json must be private (0o600), got {mode:o}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn remove_dirs_rejects_parent_dir_traversal() {
+    let pdir = std::path::Path::new("/root/profiles");
+    let evil = ProfileConfig { id: "x".into(), kind: Some(ProfileType::ClaudeMax),
+        claude_config_dir: Some("/root/profiles/../../etc".into()),
+        api_key: None, base_url: None, oauth_token: None };
+    assert!(dirs_to_remove_on_remove(&evil, pdir).is_empty(),
+        "a claudeConfigDir containing .. must not be scheduled for deletion");
+}
