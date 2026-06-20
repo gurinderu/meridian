@@ -327,10 +327,15 @@ fn headless_oauth_login(config_dir: &std::path::Path) -> Result<(), String> {
     let mut line = String::new();
     std::io::stdin().read_line(&mut line).map_err(|e| format!("read failed: {e}"))?;
     let parsed = meridian::oauth::parse_authorization_code(&line).ok_or("no authorization code received")?;
-    if let Some(st) = &parsed.state {
-        if st != &session.state {
-            return Err("OAuth state mismatch — please retry the login".into());
-        }
+    // Require the returned state and bind it to our session (CSRF protection).
+    // The claude.com callback always returns `code#state`, so this does not
+    // break the real flow — it only rejects a stateless paste, which is exactly
+    // the case worth refusing. (Deliberately stricter than the TS original,
+    // whose state check was optional — a latent weakness.)
+    let received_state = parsed.state.as_deref()
+        .ok_or("OAuth response missing the required state parameter")?;
+    if received_state != session.state {
+        return Err("OAuth state mismatch — please retry the login".into());
     }
     let token = meridian::oauth::exchange_code(&parsed.code, &session.code_verifier, &session.state)
         .ok_or("OAuth token exchange failed")?;
