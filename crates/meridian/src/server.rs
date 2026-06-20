@@ -294,12 +294,17 @@ async fn usage_quota<R: TurnRunner + StreamRunner + 'static>(
     State(state): State<AppState<R>>,
     axum::extract::RawQuery(q): axum::extract::RawQuery,
 ) -> axum::response::Response {
+    // No percent-decoding: profile ids are restricted to [A-Za-z0-9_-] slugs
+    // (is_valid_profile_id), so a raw match is exact for any real id.
     let requested = q.as_deref().and_then(|qs| qs.split('&')
         .find_map(|kv| kv.strip_prefix("profile=")))
         .map(|s| s.to_string());
     let profile = state.profiles.resolve_id(requested.as_deref());
+    // get_all() already excludes the internal "default" bucket, so the count is
+    // exactly buckets.len() — derive it from the same snapshot rather than a
+    // second lock (which could disagree by one under a concurrent record()).
     let buckets = state.rate_limit.get_all();
-    let count = state.rate_limit.entry_count();
+    let count = buckets.len();
     axum::Json(serde_json::json!({
         "profile": profile,
         "buckets": buckets,
