@@ -20,7 +20,7 @@ pub enum ProfileType {
     OauthToken,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct ProfileConfig {
     pub id: String,
     #[serde(rename = "type", default)]
