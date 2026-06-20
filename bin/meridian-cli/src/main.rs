@@ -146,9 +146,11 @@ async fn run_profile(action: ProfileCmd) {
             let token = match oauth_token {
                 Some(t) => t,
                 None => {
+                    // Not an error — the user just didn't opt into the token
+                    // path. Exit 0 so shell `&&`-chains / CI don't trip.
                     println!("Browser login is not yet supported (Phase 3d).");
                     println!("Please supply a token directly: meridian profile add {} --oauth-token <token>", id);
-                    std::process::exit(1);
+                    std::process::exit(0);
                 }
             };
             let path = match profiles_json_path() {
@@ -183,7 +185,9 @@ async fn run_profile(action: ProfileCmd) {
             }
             for d in &to_rm {
                 if d.exists() {
-                    let _ = std::fs::remove_dir_all(d);
+                    if let Err(e) = std::fs::remove_dir_all(d) {
+                        eprintln!("warning: could not remove {}: {e}", d.display());
+                    }
                 }
             }
             println!("Profile \"{}\" removed.", id);

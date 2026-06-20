@@ -43,3 +43,28 @@ fn remove_dirs_for_oauth_and_browser_profiles() {
         claude_config_dir: Some("/home/u/.claude".into()), api_key: None, base_url: None, oauth_token: None };
     assert!(dirs_to_remove_on_remove(&imported, pdir).is_empty());
 }
+
+#[test]
+fn add_oauth_token_rejects_empty_or_whitespace_token() {
+    let dir = std::env::temp_dir().join(format!("mer-pcli-empty-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("profiles.json");
+    assert!(add_oauth_token(&path, "ci", "").is_err());
+    assert!(add_oauth_token(&path, "ci2", "   ").is_err());
+    // nothing should have been written
+    assert!(load_profiles_json_at(&path).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn profiles_json_is_written_0600() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("mer-pcli-mode-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("profiles.json");
+    add_oauth_token(&path, "ci", "sk-ant-oat-xxx").unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "profiles.json must be private (0o600), got {mode:o}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
