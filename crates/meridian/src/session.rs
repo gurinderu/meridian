@@ -46,6 +46,12 @@ impl SessionStore {
     pub fn insert(&self, key: String, session_id: String) {
         self.inner.lock().unwrap().insert(key, session_id);
     }
+    /// Evict every cached session. Called when the active profile changes:
+    /// sessions were started under the previous account's credentials and
+    /// must not be resumed under a different identity.
+    pub fn clear(&self) {
+        self.inner.lock().unwrap().clear();
+    }
 }
 
 impl Default for SessionStore {

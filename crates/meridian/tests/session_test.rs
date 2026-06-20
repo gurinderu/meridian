@@ -26,3 +26,13 @@ fn store_round_trips() {
     store.insert("k".into(), "sess-2".into());
     assert_eq!(store.get("k"), Some("sess-2".into()), "insert overwrites");
 }
+
+#[test]
+fn clear_evicts_all_sessions() {
+    let store = SessionStore::new();
+    let fp = fingerprint(&[]);
+    store.insert(fp.clone(), "sess-1".into());
+    assert!(store.get(&fp).is_some());
+    store.clear();
+    assert!(store.get(&fp).is_none());
+}
