@@ -56,3 +56,13 @@ async fn refresh_for_oauth_token_profile_is_failure() {
         .header("x-meridian-profile","ci").body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
+
+#[tokio::test]
+async fn refresh_for_api_profile_is_failure() {
+    let p = ProfileConfig { id: "apikey".into(), kind: Some(ProfileType::Api),
+        claude_config_dir: None, api_key: Some("k".into()), base_url: None, oauth_token: None };
+    let app = app(vec![p]);
+    let r = app.oneshot(Request::post("/auth/refresh")
+        .header("x-meridian-profile","apikey").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}

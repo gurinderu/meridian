@@ -323,7 +323,7 @@ async fn auth_refresh<R: TurnRunner + StreamRunner + 'static>(
     // Only claude-max / default profiles have an on-disk credential store to
     // refresh; api + oauth-token profiles carry their auth via env.
     let kind = state.profiles.resolved_type(&id);
-    let dir = state.profiles.config_dir_for(&id); // add this getter on ProfileStore
+    let dir = state.profiles.config_dir_for(&id);
     let refreshable = matches!(kind, crate::profiles::ProfileType::ClaudeMax);
     let ok = if refreshable {
         tokio::task::spawn_blocking(move || {
