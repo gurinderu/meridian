@@ -7,5 +7,6 @@ pub mod pooled_runner;
 pub mod server;
 pub mod service;
 pub mod session;
+pub mod settings;
 pub mod sse;
 pub mod tools;
