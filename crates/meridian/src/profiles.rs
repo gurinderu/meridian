@@ -213,6 +213,11 @@ impl ProfileStore {
         }
     }
 
+    pub fn config_dir_for(&self, id: &str) -> Option<String> {
+        let eff = self.effective();
+        Self::find_in(&eff, id).and_then(|p| p.claude_config_dir.clone())
+    }
+
     fn overlay_for(&self, id: &str) -> HashMap<String, String> {
         let eff = self.effective();
         let Some(p) = Self::find_in(&eff, id) else { return HashMap::new() };

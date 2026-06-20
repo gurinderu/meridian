@@ -89,6 +89,7 @@ pub fn router_with_auth<R: TurnRunner + StreamRunner + 'static>(
         .route("/v1/usage/quota", get(usage_quota::<R>))
         .route("/profiles/list", get(profiles_list::<R>))
         .route("/profiles/active", post(profiles_active::<R>))
+        .route("/auth/refresh", post(auth_refresh::<R>))
         .route_layer(axum::middleware::from_fn_with_state(api_key, crate::auth::require_auth))
         .with_state(AppState { runner, sessions, profiles, rate_limit });
     Router::new()
@@ -311,6 +312,32 @@ async fn usage_quota<R: TurnRunner + StreamRunner + 'static>(
         "extraUsage": serde_json::Value::Null,
         "sources": { "oauth": serde_json::Value::Null, "sdk": { "entryCount": count } },
     })).into_response()
+}
+
+async fn auth_refresh<R: TurnRunner + StreamRunner + 'static>(
+    State(state): State<AppState<R>>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let requested = headers.get("x-meridian-profile").and_then(|v| v.to_str().ok());
+    let id = state.profiles.resolve_id(requested);
+    // Only claude-max / default profiles have an on-disk credential store to
+    // refresh; api + oauth-token profiles carry their auth via env.
+    let kind = state.profiles.resolved_type(&id);
+    let dir = state.profiles.config_dir_for(&id); // add this getter on ProfileStore
+    let refreshable = matches!(kind, crate::profiles::ProfileType::ClaudeMax);
+    let ok = if refreshable {
+        tokio::task::spawn_blocking(move || {
+            let store = crate::token_refresh::create_platform_credential_store(dir.as_deref());
+            crate::token_refresh::refresh_oauth_token(store.as_ref())
+        }).await.unwrap_or(false)
+    } else { false };
+    if ok {
+        state.rate_limit.clear();
+        axum::Json(serde_json::json!({"success":true,"message":"OAuth token refreshed successfully","profile":id})).into_response()
+    } else {
+        (axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+         axum::Json(serde_json::json!({"success":false,"message":"Token refresh failed. If the problem persists, run 'claude login'."}))).into_response()
+    }
 }
 
 fn extract_last_user_text(messages: &[Value]) -> Option<String> {
