@@ -1,5 +1,6 @@
 //! Meridian library: protocol, adapters, session, profiles, server.
 
+pub mod auth;
 pub mod error;
 pub mod openai;
 pub mod profile_cli;

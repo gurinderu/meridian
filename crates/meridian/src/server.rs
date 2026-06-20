@@ -64,14 +64,30 @@ pub fn router<R: TurnRunner + StreamRunner + 'static>(
     sessions: Arc<crate::session::SessionStore>,
     profiles: Arc<crate::profiles::ProfileStore>,
 ) -> Router {
-    Router::new()
-        .route("/health", get(|| async { "ok" }))
+    router_with_auth(runner, sessions, profiles, crate::auth::configured_key())
+}
+
+/// Like `router`, but with an explicit API key instead of reading
+/// `MERIDIAN_API_KEY` from the environment. `None` disables auth. Lets tests
+/// exercise the auth middleware deterministically without touching env vars.
+pub fn router_with_auth<R: TurnRunner + StreamRunner + 'static>(
+    runner: Arc<R>,
+    sessions: Arc<crate::session::SessionStore>,
+    profiles: Arc<crate::profiles::ProfileStore>,
+    api_key: Option<String>,
+) -> Router {
+    // /health is always open; everything else sits behind the (optional) key.
+    let protected = Router::new()
         .route("/v1/messages", post(messages::<R>))
         .route("/v1/chat/completions", post(chat_completions::<R>))
         .route("/v1/models", get(models))
         .route("/profiles/list", get(profiles_list::<R>))
         .route("/profiles/active", post(profiles_active::<R>))
-        .with_state(AppState { runner, sessions, profiles })
+        .route_layer(axum::middleware::from_fn_with_state(api_key, crate::auth::require_auth))
+        .with_state(AppState { runner, sessions, profiles });
+    Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .merge(protected)
 }
 
 async fn messages<R: TurnRunner + StreamRunner + 'static>(
