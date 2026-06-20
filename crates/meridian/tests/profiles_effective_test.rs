@@ -36,3 +36,14 @@ fn resolve_and_overlay_use_effective_list() {
     use meridian_transport::factory::EnvResolver;
     assert_eq!(store.overlay("b").get("CLAUDE_CONFIG_DIR").map(String::as_str), Some("/cfg/b"));
 }
+
+#[test]
+fn list_active_falls_back_to_first_when_stored_active_is_stale() {
+    let store = ProfileStore::new(vec![cfg("a"), cfg("b")], std::env::temp_dir());
+    store.set_active("ghost".into()); // an id not in the effective list
+    let l = store.list();
+    // exactly one active, and it is the first profile (matches resolve_id(None))
+    assert_eq!(l.iter().filter(|s| s.is_active).count(), 1);
+    assert!(l[0].is_active);
+    assert_eq!(store.resolve_id(None), l.iter().find(|s| s.is_active).unwrap().id);
+}

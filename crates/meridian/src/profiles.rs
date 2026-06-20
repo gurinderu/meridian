@@ -125,7 +125,15 @@ impl ProfileStore {
         if eff.is_empty() {
             return vec![];
         }
-        let active = self.active().unwrap_or_else(|| eff[0].id.clone());
+        // Resolve the active id by the SAME precedence as resolve_id(None):
+        // a stored active that is no longer in the effective list falls back to
+        // the first profile. Without this, a stale active id would leave every
+        // row is_active=false while resolve_id(None) (the response's
+        // activeProfile) reports the first profile — an inconsistent view.
+        let active = match self.active() {
+            Some(a) if eff.iter().any(|p| p.id == a) => a,
+            _ => eff[0].id.clone(),
+        };
         eff.iter().map(|p| ProfileSummary {
             id: p.id.clone(),
             kind: self.resolved_type_of(p),
