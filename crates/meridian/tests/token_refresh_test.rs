@@ -106,6 +106,9 @@ fn schedule_delay_pure_logic() {
 #[tokio::test]
 async fn background_refresh_flag_toggles_and_start_idempotent() {
     use meridian::token_refresh::*;
+    // Normalize the process-global scheduler state first so this test doesn't
+    // depend on a clean baseline (the statics are shared across the test binary).
+    stop_background_refresh();
     assert!(!is_background_refresh_active());
     // point at a non-existent dir so any stray loop iteration finds no creds and
     // just backs off — never touches the real default keychain entry.

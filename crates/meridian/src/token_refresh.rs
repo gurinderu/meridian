@@ -628,9 +628,17 @@ async fn schedule_loop(config_dir: Option<String>, buffer_ms: i64, failure_retry
         }
         // Credential read shells out — keep it off the async worker thread.
         let dir = config_dir.clone();
-        let expires_at = tokio::task::spawn_blocking(move || {
+        let expires_at = match tokio::task::spawn_blocking(move || {
             create_platform_credential_store(dir.as_deref()).read().map(|c| c.claude_ai_oauth.expires_at)
-        }).await.ok().flatten();
+        }).await {
+            Ok(v) => v,
+            Err(e) => {
+                // Blocking reader panicked — log it (don't silently fold into the
+                // no-credentials path) and back off at the failure cadence.
+                tracing::warn!("token_refresh.scheduler_read_task_failed err={e}");
+                None
+            }
+        };
         if !sched_live(gen) {
             return;
         }
@@ -650,5 +658,8 @@ async fn schedule_loop(config_dir: Option<String>, buffer_ms: i64, failure_retry
             }
         };
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        if !sched_live(gen) {
+            return; // stop()/start() landed during the sleep — bail promptly
+        }
     }
 }
