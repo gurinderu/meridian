@@ -280,16 +280,11 @@ fn parse_keychain_value(raw: &str) -> Option<(CredentialsFile, bool)> {
         return Some((c, false));
     }
     // Try hex-decoded JSON (Claude Code's format after `claude login`).
-    let decoded = (0..trimmed.len())
-        .step_by(2)
-        .filter_map(|i| {
-            if i + 1 < trimmed.len() {
-                u8::from_str_radix(&trimmed[i..i+2], 16).ok()
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<u8>>();
+    let decoded: Vec<u8> = trimmed
+        .as_bytes()
+        .chunks_exact(2)
+        .filter_map(|pair| std::str::from_utf8(pair).ok().and_then(|h| u8::from_str_radix(h, 16).ok()))
+        .collect();
     if decoded.is_empty() {
         return None;
     }
@@ -320,7 +315,7 @@ impl CredentialStore for KeychainStore {
         let raw = String::from_utf8_lossy(&out.stdout);
         match parse_keychain_value(&raw) {
             Some((creds, was_hex)) => {
-                keychain_was_hex().lock().unwrap().insert(self.service.clone(), was_hex);
+                keychain_was_hex().lock().unwrap_or_else(|e| e.into_inner()).insert(self.service.clone(), was_hex);
                 Some(creds)
             }
             None => {
@@ -332,7 +327,7 @@ impl CredentialStore for KeychainStore {
 
     fn write(&self, c: &CredentialsFile) -> bool {
         let json = serialize_credentials(c);
-        let was_hex = *keychain_was_hex().lock().unwrap().get(&self.service).unwrap_or(&false);
+        let was_hex = *keychain_was_hex().lock().unwrap_or_else(|e| e.into_inner()).get(&self.service).unwrap_or(&false);
         let value = if was_hex {
             json.bytes().map(|b| format!("{b:02x}")).collect::<String>()
         } else {
@@ -415,7 +410,7 @@ fn inflight() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
 }
 
 fn per_key_lock(key: &str) -> Arc<Mutex<()>> {
-    let mut map = inflight().lock().unwrap();
+    let mut map = inflight().lock().unwrap_or_else(|e| e.into_inner());
     map.entry(key.to_string()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
 }
 
@@ -460,7 +455,7 @@ fn oauth_post(body: &str) -> Option<String> {
 pub fn refresh_oauth_token(store: &dyn CredentialStore) -> bool {
     let key = store.refresh_key();
     let lock = per_key_lock(&key);
-    let _guard = lock.lock().unwrap();
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
 
     let creds = match store.read() {
         Some(c) => c,

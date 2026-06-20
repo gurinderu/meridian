@@ -329,7 +329,7 @@ async fn auth_refresh<R: TurnRunner + StreamRunner + 'static>(
         tokio::task::spawn_blocking(move || {
             let store = crate::token_refresh::create_platform_credential_store(dir.as_deref());
             crate::token_refresh::refresh_oauth_token(store.as_ref())
-        }).await.unwrap_or(false)
+        }).await.unwrap_or_else(|e| { tracing::error!("token refresh task failed: {e}"); false })
     } else { false };
     if ok {
         state.rate_limit.clear();
