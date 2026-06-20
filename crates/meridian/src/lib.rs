@@ -12,4 +12,5 @@ pub mod service;
 pub mod session;
 pub mod settings;
 pub mod sse;
+pub mod token_refresh;
 pub mod tools;
