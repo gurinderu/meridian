@@ -51,17 +51,33 @@ impl std::fmt::Debug for ProfileConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ProfileSummary {
+    pub id: String,
+    pub kind: ProfileType,
+    pub is_active: bool,
+}
+
 const DEFAULT_PROFILE_ID: &str = "default";
+const DISK_CACHE_TTL_MS: u128 = 5_000;
 
 pub struct ProfileStore {
-    profiles: Vec<ProfileConfig>,
+    config_profiles: Vec<ProfileConfig>,
     config_root: PathBuf,
     active: Mutex<Option<String>>,
+    disk_discovery: bool,
+    disk_cache: Mutex<Option<(std::time::Instant, Vec<ProfileConfig>)>>,
 }
 
 impl ProfileStore {
     pub fn new(profiles: Vec<ProfileConfig>, config_root: PathBuf) -> Self {
-        ProfileStore { profiles, config_root, active: Mutex::new(None) }
+        ProfileStore {
+            config_profiles: profiles,
+            config_root,
+            active: Mutex::new(None),
+            disk_discovery: false,
+            disk_cache: Mutex::new(None),
+        }
     }
 
     /// Load from `MERIDIAN_PROFILES` (JSON array) or `~/.config/meridian/profiles.json`.
@@ -70,12 +86,78 @@ impl ProfileStore {
         Self::new(profiles, config_root)
     }
 
+    /// Turn on live re-discovery of ~/.config/meridian/profiles.json (5s TTL).
+    pub fn with_disk_discovery(mut self) -> Self {
+        self.disk_discovery = true;
+        self
+    }
+
+    fn disk_profiles(&self) -> Vec<ProfileConfig> {
+        let mut g = self.disk_cache.lock().unwrap();
+        if let Some((at, ref cached)) = *g {
+            if at.elapsed().as_millis() < DISK_CACHE_TTL_MS {
+                return cached.clone();
+            }
+        }
+        let fresh = profiles_json_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|raw| match serde_json::from_str::<Vec<ProfileConfig>>(&raw) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!("profiles.json is not valid JSON: {e}; ignoring");
+                    None
+                }
+            })
+            .unwrap_or_default();
+        *g = Some((std::time::Instant::now(), fresh.clone()));
+        fresh
+    }
+
+    pub fn effective(&self) -> Vec<ProfileConfig> {
+        if !self.disk_discovery {
+            return self.config_profiles.clone();
+        }
+        merge_effective(&self.config_profiles, self.disk_profiles())
+    }
+
+    pub fn list(&self) -> Vec<ProfileSummary> {
+        let eff = self.effective();
+        if eff.is_empty() {
+            return vec![];
+        }
+        let active = self.active().unwrap_or_else(|| eff[0].id.clone());
+        eff.iter().map(|p| ProfileSummary {
+            id: p.id.clone(),
+            kind: self.resolved_type_of(p),
+            is_active: p.id == active,
+        }).collect()
+    }
+
+    pub fn restore_active(&self) {
+        if self.active().is_some() {
+            return;
+        }
+        if !self.disk_discovery {
+            return;
+        }
+        let Some(saved) = crate::settings::get_active_profile() else { return };
+        let eff = self.effective();
+        if eff.is_empty() || eff.iter().any(|p| p.id == saved) {
+            *self.active.lock().unwrap() = Some(saved);
+        } else {
+            tracing::warn!("saved active profile \"{saved}\" not found; using default");
+        }
+    }
+
     /// Set the process-wide active profile. NOT safe to drive from per-request
     /// HTTP handlers: it is shared mutable state across all concurrent requests.
     /// Request-scoped selection must go through the `x-meridian-profile` header
     /// (resolve_id), which supersedes this. Intended for a future CLI/management
     /// command that sets a session default.
     pub fn set_active(&self, id: String) {
+        if self.disk_discovery {
+            crate::settings::set_active_profile(&id);
+        }
         *self.active.lock().unwrap() = Some(id);
     }
 
@@ -83,22 +165,23 @@ impl ProfileStore {
         self.active.lock().unwrap().clone()
     }
 
-    fn find(&self, id: &str) -> Option<&ProfileConfig> {
-        self.profiles.iter().find(|p| p.id == id)
+    fn find_in<'a>(eff: &'a [ProfileConfig], id: &str) -> Option<&'a ProfileConfig> {
+        eff.iter().find(|p| p.id == id)
     }
 
     /// Resolve a request to a profile id: header > active > first > "default".
     /// An unknown header/active id falls back to the first profile.
     pub fn resolve_id(&self, requested: Option<&str>) -> String {
-        if self.profiles.is_empty() {
+        let eff = self.effective();
+        if eff.is_empty() {
             return DEFAULT_PROFILE_ID.to_string();
         }
-        let first = self.profiles[0].id.clone();
+        let first = eff[0].id.clone();
         let candidate = requested
             .map(str::to_string)
             .or_else(|| self.active())
             .unwrap_or_else(|| first.clone());
-        if self.find(&candidate).is_some() {
+        if Self::find_in(&eff, &candidate).is_some() {
             candidate
         } else {
             tracing::warn!("unknown profile \"{candidate}\"; using first profile \"{first}\"");
@@ -106,18 +189,27 @@ impl ProfileStore {
         }
     }
 
+    fn resolved_type_of(&self, p: &ProfileConfig) -> ProfileType {
+        if p.oauth_token.is_some() || p.kind == Some(ProfileType::OauthToken) {
+            ProfileType::OauthToken
+        } else {
+            p.kind.unwrap_or(ProfileType::ClaudeMax)
+        }
+    }
+
     pub fn resolved_type(&self, id: &str) -> ProfileType {
-        match self.find(id) {
-            Some(p) if p.oauth_token.is_some() || p.kind == Some(ProfileType::OauthToken) => ProfileType::OauthToken,
-            Some(p) => p.kind.unwrap_or(ProfileType::ClaudeMax),
+        let eff = self.effective();
+        match Self::find_in(&eff, id) {
+            Some(p) => self.resolved_type_of(p),
             None => ProfileType::ClaudeMax,
         }
     }
 
     fn overlay_for(&self, id: &str) -> HashMap<String, String> {
-        let Some(p) = self.find(id) else { return HashMap::new() };
+        let eff = self.effective();
+        let Some(p) = Self::find_in(&eff, id) else { return HashMap::new() };
         let mut env = HashMap::new();
-        match self.resolved_type(id) {
+        match self.resolved_type_of(p) {
             ProfileType::OauthToken => {
                 if let Some(tok) = &p.oauth_token {
                     env.insert("CLAUDE_CODE_OAUTH_TOKEN".into(), tok.clone());
@@ -154,6 +246,18 @@ impl EnvResolver for ProfileStore {
     fn overlay(&self, profile_id: &str) -> HashMap<String, String> {
         self.overlay_for(profile_id)
     }
+}
+
+/// Config profiles followed by disk profiles whose id is not already present.
+pub fn merge_effective(from_config: &[ProfileConfig], from_disk: Vec<ProfileConfig>) -> Vec<ProfileConfig> {
+    let ids: std::collections::HashSet<&str> = from_config.iter().map(|p| p.id.as_str()).collect();
+    let mut out = from_config.to_vec();
+    out.extend(from_disk.into_iter().filter(|p| !ids.contains(p.id.as_str())));
+    out
+}
+
+fn profiles_json_path() -> Option<PathBuf> {
+    dirs_config_meridian().map(|d| d.join("profiles.json"))
 }
 
 fn load_profiles() -> Option<Vec<ProfileConfig>> {
