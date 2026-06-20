@@ -85,3 +85,34 @@ fn keychain_service_is_lexical_not_symlink_resolved() {
     assert_eq!(a, b, "lexical .. folding must match the CLI's path.resolve()");
     assert!(a.starts_with("Claude Code-credentials-"));
 }
+
+#[test]
+fn schedule_delay_pure_logic() {
+    use meridian::token_refresh::schedule_delay_ms;
+    let now = 1_000_000_000_000i64;
+    let buf = 5 * 60 * 1000;
+    let retry = 5 * 60 * 1000;
+    // no creds / no expiry -> re-poll after failure_retry
+    assert_eq!(schedule_delay_ms(None, now, buf, retry), Some(retry as u64));
+    assert_eq!(schedule_delay_ms(Some(0), now, buf, retry), Some(retry as u64));
+    // far future -> sleep until (expires - buffer)
+    let future = now + 60 * 60 * 1000; // +1h
+    assert_eq!(schedule_delay_ms(Some(future), now, buf, retry), Some((future - now - buf) as u64));
+    // within buffer / already expired -> due now (None)
+    assert_eq!(schedule_delay_ms(Some(now + buf - 1), now, buf, retry), None);
+    assert_eq!(schedule_delay_ms(Some(now - 1), now, buf, retry), None);
+}
+
+#[tokio::test]
+async fn background_refresh_flag_toggles_and_start_idempotent() {
+    use meridian::token_refresh::*;
+    assert!(!is_background_refresh_active());
+    // point at a non-existent dir so any stray loop iteration finds no creds and
+    // just backs off — never touches the real default keychain entry.
+    start_background_refresh(Some("/nonexistent-meridian-test-xyz".into()), 60_000, 60_000);
+    assert!(is_background_refresh_active());
+    start_background_refresh(Some("/nonexistent-meridian-test-xyz".into()), 60_000, 60_000); // no-op
+    assert!(is_background_refresh_active());
+    stop_background_refresh();
+    assert!(!is_background_refresh_active());
+}

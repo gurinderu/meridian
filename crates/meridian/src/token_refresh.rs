@@ -560,3 +560,95 @@ pub fn ensure_fresh_token(store: &dyn CredentialStore, buffer_ms: i64) -> bool {
     }
     refresh_oauth_token(store)
 }
+
+// ---------------------------------------------------------------------------
+// Background refresh scheduler
+// ---------------------------------------------------------------------------
+//
+// A traffic-independent timer that refreshes the access token shortly before
+// each expiry. Why it matters even though the spawned `claude` CLI refreshes
+// its own creds during a turn: an IDLE proxy never spawns the CLI, so without
+// this nothing keeps the refresh token warm — and Anthropic invalidates a
+// refresh token that sits unused past expiry (observed in the TS original).
+// Per-request `ensure_fresh_token` and refresh-on-401 from the TS are
+// intentionally NOT ported: the CLI owns the in-turn token lifecycle, so they
+// would add hot-path latency for no gain; the scheduler covers the gap the CLI
+// cannot (no traffic).
+
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+static SCHED_ACTIVE: AtomicBool = AtomicBool::new(false);
+// Bumped on every start/stop. Each spawned loop captures the generation it
+// began with and bails once the global moves on — so a stop()+start() that
+// interleaves with an in-flight read can't leave a superseded loop alive.
+static SCHED_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// Pure scheduling decision: how long to wait before the next refresh check.
+/// `None` means "due now — refresh immediately"; `Some(ms)` means sleep that
+/// long first. No credentials / no expiry → re-poll after `failure_retry_ms`.
+pub fn schedule_delay_ms(expires_at: Option<i64>, now: i64, buffer_ms: i64, failure_retry_ms: i64) -> Option<u64> {
+    match expires_at {
+        None | Some(0) => Some(failure_retry_ms.max(0) as u64),
+        Some(e) => {
+            let due_in = e - now - buffer_ms;
+            if due_in <= 0 { None } else { Some(due_in as u64) }
+        }
+    }
+}
+
+fn sched_live(gen: u64) -> bool {
+    SCHED_ACTIVE.load(Ordering::SeqCst) && gen == SCHED_GEN.load(Ordering::SeqCst)
+}
+
+pub fn is_background_refresh_active() -> bool {
+    SCHED_ACTIVE.load(Ordering::SeqCst)
+}
+
+/// Start the self-rescheduling refresh loop for the given config dir (`None` =
+/// the default `~/.claude` account). Idempotent: a second call while one is
+/// already running is a no-op. Must be called from within a tokio runtime.
+pub fn start_background_refresh(config_dir: Option<String>, buffer_ms: i64, failure_retry_ms: i64) {
+    if SCHED_ACTIVE.swap(true, Ordering::SeqCst) {
+        return; // already running
+    }
+    let gen = SCHED_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    tokio::spawn(schedule_loop(config_dir, buffer_ms, failure_retry_ms, gen));
+}
+
+/// Stop the scheduler. Idempotent. Any running loop bails at its next check.
+pub fn stop_background_refresh() {
+    SCHED_ACTIVE.store(false, Ordering::SeqCst);
+    SCHED_GEN.fetch_add(1, Ordering::SeqCst);
+}
+
+async fn schedule_loop(config_dir: Option<String>, buffer_ms: i64, failure_retry_ms: i64, gen: u64) {
+    loop {
+        if !sched_live(gen) {
+            return;
+        }
+        // Credential read shells out — keep it off the async worker thread.
+        let dir = config_dir.clone();
+        let expires_at = tokio::task::spawn_blocking(move || {
+            create_platform_credential_store(dir.as_deref()).read().map(|c| c.claude_ai_oauth.expires_at)
+        }).await.ok().flatten();
+        if !sched_live(gen) {
+            return;
+        }
+        let delay_ms = match schedule_delay_ms(expires_at, now_ms(), buffer_ms, failure_retry_ms) {
+            Some(ms) => ms,
+            None => {
+                let dir = config_dir.clone();
+                let ok = tokio::task::spawn_blocking(move || {
+                    refresh_oauth_token(create_platform_credential_store(dir.as_deref()).as_ref())
+                }).await.unwrap_or(false);
+                if !sched_live(gen) {
+                    return;
+                }
+                // On success re-read immediately to compute the next due time
+                // from the new expiry; on failure back off and retry.
+                if ok { 0 } else { failure_retry_ms.max(0) as u64 }
+            }
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+    }
+}

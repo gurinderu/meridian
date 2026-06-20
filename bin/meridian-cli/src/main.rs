@@ -109,6 +109,10 @@ async fn serve(args: ServeArgs) {
     let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap, profiles.clone(), rate_limit.clone()));
     let sessions = Arc::new(SessionStore::new());
     let app = router(runner, sessions, profiles, rate_limit);
+    // Keep the default account's OAuth refresh token warm even when the proxy
+    // is idle (Anthropic invalidates a refresh token left unused past expiry).
+    const FIVE_MIN_MS: i64 = 5 * 60 * 1000;
+    meridian::token_refresh::start_background_refresh(None, FIVE_MIN_MS, FIVE_MIN_MS);
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
     tracing::info!("meridian listening on {addr}");
