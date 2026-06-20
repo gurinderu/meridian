@@ -30,7 +30,7 @@ impl StreamRunner for FakeRunner {
 
 #[tokio::test]
 async fn messages_endpoint_returns_assistant_message() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())), Arc::new(meridian::rate_limit::RateLimitStore::new()));
     let body = json!({"model":"opus","system":"be brief","messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages")
@@ -47,7 +47,7 @@ async fn messages_endpoint_returns_assistant_message() {
 
 #[tokio::test]
 async fn empty_messages_is_400() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())), Arc::new(meridian::rate_limit::RateLimitStore::new()));
     let body = json!({"messages":[]});
     let resp = app.oneshot(
         Request::post("/v1/messages")

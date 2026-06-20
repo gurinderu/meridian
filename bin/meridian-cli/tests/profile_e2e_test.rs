@@ -25,8 +25,9 @@ async fn api_profile_repoints_subprocess() {
         base_url: Some("http://127.0.0.1:1/".into()), oauth_token: None,
     };
     let profiles = Arc::new(ProfileStore::new(vec![broken], root.clone()));
-    let runner = Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone()));
-    let app = router(runner, Arc::new(SessionStore::new()), profiles);
+    let rate_limit = Arc::new(meridian::rate_limit::RateLimitStore::new());
+    let runner = Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone(), rate_limit.clone()));
+    let app = router(runner, Arc::new(SessionStore::new()), profiles, rate_limit);
 
     // The broken profile must fail (overlay reached the subprocess and re-pointed it).
     let r_broken = app.oneshot(req(Some("broken"))).await.unwrap();
@@ -35,8 +36,9 @@ async fn api_profile_repoints_subprocess() {
     // A second store with NO profiles falls back to host creds and succeeds.
     let host_root = std::env::temp_dir().join(format!("meridian-host-{}", std::process::id()));
     let host_store = Arc::new(ProfileStore::new(vec![], host_root.clone()));
-    let host_runner = Arc::new(pooled_runner("claude".into(), host_root, 2, host_store.clone()));
-    let host_app = router(host_runner, Arc::new(SessionStore::new()), host_store);
+    let host_rate_limit = Arc::new(meridian::rate_limit::RateLimitStore::new());
+    let host_runner = Arc::new(pooled_runner("claude".into(), host_root, 2, host_store.clone(), host_rate_limit.clone()));
+    let host_app = router(host_runner, Arc::new(SessionStore::new()), host_store, host_rate_limit);
     let r_host = host_app.oneshot(req(None)).await.unwrap();
     assert_eq!(r_host.status(), StatusCode::OK, "no-profile path should use host creds and succeed");
     let body = axum::body::to_bytes(r_host.into_body(), usize::MAX).await.unwrap();

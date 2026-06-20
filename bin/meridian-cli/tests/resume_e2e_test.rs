@@ -12,9 +12,10 @@ use meridian::session::SessionStore;
 async fn two_turn_conversation_resumes_context() {
     let root = std::env::temp_dir().join(format!("meridian-resume-{}", std::process::id()));
     let profiles = std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir()));
-    let runner = Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone()));
+    let rate_limit = Arc::new(meridian::rate_limit::RateLimitStore::new());
+    let runner = Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone(), rate_limit.clone()));
     let sessions = Arc::new(SessionStore::new());
-    let app = || router(runner.clone(), sessions.clone(), profiles.clone());
+    let app = || router(runner.clone(), sessions.clone(), profiles.clone(), Arc::new(meridian::rate_limit::RateLimitStore::new()));
 
     // Turn 1: state a codeword.
     let r1 = app().oneshot(Request::post("/v1/messages").header("content-type","application/json")

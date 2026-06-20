@@ -12,7 +12,8 @@ use meridian::session::SessionStore;
 async fn openai_chat_completions_end_to_end() {
     let root = std::env::temp_dir().join(format!("meridian-oai-{}", std::process::id()));
     let profiles = std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir()));
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone())), Arc::new(SessionStore::new()), profiles);
+    let rate_limit = Arc::new(meridian::rate_limit::RateLimitStore::new());
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone(), rate_limit.clone())), Arc::new(SessionStore::new()), profiles, rate_limit);
     let body = json!({"model":"sonnet","messages":[{"role":"user","content":"Reply with exactly: OK"}]});
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")
@@ -30,7 +31,8 @@ async fn openai_chat_completions_end_to_end() {
 async fn openai_chat_completions_streaming_end_to_end() {
     let root = std::env::temp_dir().join(format!("meridian-oai-stream-{}", std::process::id()));
     let profiles = std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir()));
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone())), Arc::new(SessionStore::new()), profiles);
+    let rate_limit = Arc::new(meridian::rate_limit::RateLimitStore::new());
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone(), rate_limit.clone())), Arc::new(SessionStore::new()), profiles, rate_limit);
     let body = serde_json::json!({"model":"sonnet","stream":true,"messages":[{"role":"user","content":"Reply with exactly: OK"}]});
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")

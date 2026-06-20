@@ -29,7 +29,7 @@ impl meridian::server::StreamRunner for NoRun {
 
 fn app(profiles: Vec<ProfileConfig>) -> axum::Router {
     let store = Arc::new(ProfileStore::new(profiles, std::env::temp_dir()));
-    router(Arc::new(NoRun), Arc::new(SessionStore::new()), store)
+    router(Arc::new(NoRun), Arc::new(SessionStore::new()), store, Arc::new(meridian::rate_limit::RateLimitStore::new()))
 }
 
 fn pc(id: &str, kind: ProfileType) -> ProfileConfig {

@@ -32,7 +32,7 @@ impl StreamRunner for ToolRunner {
 #[tokio::test]
 async fn surfaces_tool_use_with_stop_reason() {
     let runner = Arc::new(ToolRunner::default());
-    let app = router(runner.clone(), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
+    let app = router(runner.clone(), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())), Arc::new(meridian::rate_limit::RateLimitStore::new()));
     let body = json!({
         "model":"opus",
         "tools":[{"name":"edit_file","description":"Edit","input_schema":{"type":"object"}}],

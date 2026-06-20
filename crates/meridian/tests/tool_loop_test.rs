@@ -30,7 +30,7 @@ impl StreamRunner for RecRunner {
 #[tokio::test]
 async fn tool_result_request_sends_unwrapped_result_as_prompt() {
     let runner = Arc::new(RecRunner::default());
-    let app = router(runner.clone(), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
+    let app = router(runner.clone(), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())), Arc::new(meridian::rate_limit::RateLimitStore::new()));
     let body = json!({"model":"opus","tools":[{"name":"get_weather"}],"messages":[
         {"role":"user","content":"weather in Paris?"},
         {"role":"assistant","content":[{"type":"tool_use","id":"tu_9","name":"get_weather","input":{"city":"Paris"}}]},

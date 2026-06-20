@@ -29,7 +29,7 @@ impl StreamRunner for FakeRunner {
 
 #[tokio::test]
 async fn stream_true_returns_sse_with_events() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())), Arc::new(meridian::rate_limit::RateLimitStore::new()));
     let body = json!({"model":"sonnet","stream":true,"messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages").header("content-type","application/json")
@@ -47,7 +47,7 @@ async fn stream_true_returns_sse_with_events() {
 
 #[tokio::test]
 async fn stream_false_still_returns_json() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())), Arc::new(meridian::rate_limit::RateLimitStore::new()));
     let body = json!({"model":"sonnet","messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/messages").header("content-type","application/json")

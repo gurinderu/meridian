@@ -43,7 +43,7 @@ async fn post_with(app: axum::Router, header: Option<&str>) {
 #[tokio::test]
 async fn header_selects_profile_else_first() {
     let runner = Arc::new(RecordingRunner::default());
-    let app = || router(runner.clone(), Arc::new(SessionStore::new()), store());
+    let app = || router(runner.clone(), Arc::new(SessionStore::new()), store(), Arc::new(meridian::rate_limit::RateLimitStore::new()));
 
     post_with(app(), Some("work")).await;
     assert_eq!(*runner.last_profile.lock().unwrap(), Some("work".into()), "header selects profile");

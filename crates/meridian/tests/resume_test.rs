@@ -42,7 +42,7 @@ async fn second_turn_resumes_and_sends_only_new_user_message() {
     let runner = Arc::new(RecordingRunner::default());
     let sessions = Arc::new(SessionStore::new());
     let profiles = Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into()));
-    let app = || router(runner.clone(), sessions.clone(), profiles.clone());
+    let app = || router(runner.clone(), sessions.clone(), profiles.clone(), Arc::new(meridian::rate_limit::RateLimitStore::new()));
 
     // Turn 1: single user message -> fresh (resume None), stores sess-A under the post-turn fingerprint.
     post(app(), json!({"model":"opus","messages":[{"role":"user","content":"u1"}]})).await;

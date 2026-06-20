@@ -10,6 +10,7 @@ use meridian_transport::pool::{IsolationKey, Pool};
 
 use crate::error::ProxyError;
 use crate::profiles::ProfileStore;
+use crate::rate_limit::RateLimitStore;
 use crate::server::{TurnRequest, TurnResult, TurnRunner};
 
 struct NoTools;
@@ -28,11 +29,12 @@ pub struct PooledRunner {
     exe: String,
     config_root: PathBuf,
     profiles: Arc<ProfileStore>,
+    rate_limit: Arc<RateLimitStore>,
 }
 
-pub fn pooled_runner(exe: String, config_root: PathBuf, cap: usize, profiles: Arc<ProfileStore>) -> PooledRunner {
+pub fn pooled_runner(exe: String, config_root: PathBuf, cap: usize, profiles: Arc<ProfileStore>, rate_limit: Arc<RateLimitStore>) -> PooledRunner {
     let f = factory::new_with_resolver(exe.clone(), config_root.clone(), Arc::new(NoTools), profiles.clone());
-    PooledRunner { pool: std::sync::Arc::new(Pool::new(f, cap)), exe, config_root, profiles }
+    PooledRunner { pool: std::sync::Arc::new(Pool::new(f, cap)), exe, config_root, profiles, rate_limit }
 }
 
 impl TurnRunner for PooledRunner {
@@ -53,7 +55,7 @@ impl TurnRunner for PooledRunner {
             .map_err(|e| ProxyError::Upstream(format!("spawn failed: {e}")))?
             .ok_or_else(|| ProxyError::Upstream("pool at capacity".into()))?;
 
-        let result = run_one_turn(lease.proc(), req.system, req.prompt).await;
+        let result = run_one_turn(lease.proc(), req.system, req.prompt, &self.rate_limit).await;
         lease.proc().shutdown().await;
         lease.discard(); // a shut-down process must not return to the warm idle set
         result
@@ -81,7 +83,7 @@ impl PooledRunner {
         let mut proc = meridian_transport::process::spawn(&self.exe, &cfg, &base, tools.clone())
             .await
             .map_err(|e| ProxyError::Upstream(format!("spawn failed: {e}")))?;
-        let result = run_one_turn(&mut proc, req.system, req.prompt).await;
+        let result = run_one_turn(&mut proc, req.system, req.prompt, &self.rate_limit).await;
         proc.shutdown().await;
         match result {
             Ok(mut tr) => {
@@ -103,6 +105,7 @@ impl StreamRunner for PooledRunner {
     fn run_stream(&self, _model: String, system: Option<String>, prompt: String, profile: Option<String>) -> EventStream {
         let (tx, rx) = mpsc::channel::<Value>(64);
         let pool = self.pool.clone();
+        let rate_limit = self.rate_limit.clone();
         tokio::spawn(async move {
             // `profile` is already resolved by the HTTP handler via
             // ProfileStore::resolve_id; the "default" fallback only applies when
@@ -140,6 +143,7 @@ impl StreamRunner for PooledRunner {
                             }
                             break;
                         }
+                        CliMessage::RateLimitEvent { info, .. } => rate_limit.record(&info),
                         _ => {}
                     }
                 }
@@ -176,6 +180,7 @@ async fn run_one_turn(
     proc: &mut meridian_transport::process::CliProcess,
     system: Option<String>,
     prompt: String,
+    rate_limit: &RateLimitStore,
 ) -> Result<TurnResult, ProxyError> {
     let full = match system {
         Some(s) if !s.is_empty() => format!("{s}\n\n{prompt}"),
@@ -199,6 +204,7 @@ async fn run_one_turn(
                     upstream_error = upstream_error_from_result(&raw, result);
                     break;
                 }
+                CliMessage::RateLimitEvent { info, .. } => rate_limit.record(&info),
                 _ => {}
             }
         }

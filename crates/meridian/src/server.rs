@@ -7,6 +7,7 @@ use axum::{Json, Router};
 use serde_json::Value;
 
 use crate::error::ProxyError;
+use crate::rate_limit::RateLimitStore;
 
 pub struct TurnRequest {
     pub model: String,
@@ -47,6 +48,7 @@ pub struct AppState<R> {
     pub runner: Arc<R>,
     pub sessions: Arc<crate::session::SessionStore>,
     pub profiles: Arc<crate::profiles::ProfileStore>,
+    pub rate_limit: Arc<RateLimitStore>,
 }
 
 impl<R> Clone for AppState<R> {
@@ -55,6 +57,7 @@ impl<R> Clone for AppState<R> {
             runner: self.runner.clone(),
             sessions: self.sessions.clone(),
             profiles: self.profiles.clone(),
+            rate_limit: self.rate_limit.clone(),
         }
     }
 }
@@ -63,8 +66,9 @@ pub fn router<R: TurnRunner + StreamRunner + 'static>(
     runner: Arc<R>,
     sessions: Arc<crate::session::SessionStore>,
     profiles: Arc<crate::profiles::ProfileStore>,
+    rate_limit: Arc<RateLimitStore>,
 ) -> Router {
-    router_with_auth(runner, sessions, profiles, crate::auth::configured_key())
+    router_with_auth(runner, sessions, profiles, rate_limit, crate::auth::configured_key())
 }
 
 /// Like `router`, but with an explicit API key instead of reading
@@ -74,6 +78,7 @@ pub fn router_with_auth<R: TurnRunner + StreamRunner + 'static>(
     runner: Arc<R>,
     sessions: Arc<crate::session::SessionStore>,
     profiles: Arc<crate::profiles::ProfileStore>,
+    rate_limit: Arc<RateLimitStore>,
     api_key: Option<String>,
 ) -> Router {
     // /health is always open; everything else sits behind the (optional) key.
@@ -81,10 +86,11 @@ pub fn router_with_auth<R: TurnRunner + StreamRunner + 'static>(
         .route("/v1/messages", post(messages::<R>))
         .route("/v1/chat/completions", post(chat_completions::<R>))
         .route("/v1/models", get(models))
+        .route("/v1/usage/quota", get(usage_quota::<R>))
         .route("/profiles/list", get(profiles_list::<R>))
         .route("/profiles/active", post(profiles_active::<R>))
         .route_layer(axum::middleware::from_fn_with_state(api_key, crate::auth::require_auth))
-        .with_state(AppState { runner, sessions, profiles });
+        .with_state(AppState { runner, sessions, profiles, rate_limit });
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .merge(protected)
@@ -280,7 +286,26 @@ async fn profiles_active<R: TurnRunner + StreamRunner + 'static>(
     }
     state.profiles.set_active(profile.clone());
     state.sessions.clear();
+    state.rate_limit.clear();
     Json(serde_json::json!({ "success": true, "activeProfile": profile })).into_response()
+}
+
+async fn usage_quota<R: TurnRunner + StreamRunner + 'static>(
+    State(state): State<AppState<R>>,
+    axum::extract::RawQuery(q): axum::extract::RawQuery,
+) -> axum::response::Response {
+    let requested = q.as_deref().and_then(|qs| qs.split('&')
+        .find_map(|kv| kv.strip_prefix("profile=")))
+        .map(|s| s.to_string());
+    let profile = state.profiles.resolve_id(requested.as_deref());
+    let buckets = state.rate_limit.get_all();
+    let count = state.rate_limit.entry_count();
+    axum::Json(serde_json::json!({
+        "profile": profile,
+        "buckets": buckets,
+        "extraUsage": serde_json::Value::Null,
+        "sources": { "oauth": serde_json::Value::Null, "sdk": { "entryCount": count } },
+    })).into_response()
 }
 
 fn extract_last_user_text(messages: &[Value]) -> Option<String> {

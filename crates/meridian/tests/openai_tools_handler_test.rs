@@ -31,7 +31,7 @@ impl StreamRunner for ToolRunner {
 #[tokio::test]
 async fn chat_completions_surfaces_tool_calls() {
     let runner = Arc::new(ToolRunner::default());
-    let app = router(runner.clone(), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
+    let app = router(runner.clone(), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())), Arc::new(meridian::rate_limit::RateLimitStore::new()));
     let body = json!({
         "model":"opus",
         "tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}],

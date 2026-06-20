@@ -28,6 +28,7 @@ fn app(key: Option<&str>) -> axum::Router {
         Arc::new(NoRun),
         Arc::new(SessionStore::new()),
         Arc::new(ProfileStore::new(vec![], std::env::temp_dir())),
+        Arc::new(meridian::rate_limit::RateLimitStore::new()),
         key.map(str::to_string),
     )
 }

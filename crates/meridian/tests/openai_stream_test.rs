@@ -32,7 +32,7 @@ impl StreamRunner for FakeRunner {
 
 #[tokio::test]
 async fn openai_stream_emits_chunks_and_done() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())), Arc::new(meridian::rate_limit::RateLimitStore::new()));
     let body = json!({"model":"opus","stream":true,"messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")
@@ -51,7 +51,7 @@ async fn openai_stream_emits_chunks_and_done() {
 
 #[tokio::test]
 async fn openai_stream_false_still_json() {
-    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())));
+    let app = router(Arc::new(FakeRunner), Arc::new(SessionStore::new()), Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), "/cfg".into())), Arc::new(meridian::rate_limit::RateLimitStore::new()));
     let body = json!({"model":"opus","messages":[{"role":"user","content":"hi"}]});
     let resp = app.oneshot(
         Request::post("/v1/chat/completions").header("content-type","application/json")

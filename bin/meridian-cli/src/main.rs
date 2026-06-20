@@ -105,9 +105,10 @@ async fn serve(args: ServeArgs) {
     }
     let profiles = Arc::new(store);
     profiles.restore_active();
-    let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap, profiles.clone()));
+    let rate_limit = std::sync::Arc::new(meridian::rate_limit::RateLimitStore::new());
+    let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap, profiles.clone(), rate_limit.clone()));
     let sessions = Arc::new(SessionStore::new());
-    let app = router(runner, sessions, profiles);
+    let app = router(runner, sessions, profiles, rate_limit);
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
     tracing::info!("meridian listening on {addr}");
