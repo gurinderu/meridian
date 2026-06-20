@@ -52,10 +52,8 @@ const K: [u32; 64] = [
     0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-/// Pure Rust SHA-256 producing a lowercase hex string. No dependencies.
-/// Must return `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad`
-/// for input `b"abc"`.
-pub fn sha256_hex(input: &[u8]) -> String {
+/// Pure Rust SHA-256 producing a raw 32-byte digest. No dependencies.
+pub fn sha256_bytes(input: &[u8]) -> [u8; 32] {
     let mut h = [
         0x6a09e667_u32, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
@@ -99,7 +97,18 @@ pub fn sha256_hex(input: &[u8]) -> String {
         h[6] = h[6].wrapping_add(g); h[7] = h[7].wrapping_add(hh);
     }
 
-    h.iter().map(|v| format!("{v:08x}")).collect()
+    let mut out = [0u8; 32];
+    for (i, word) in h.iter().enumerate() {
+        out[i*4..i*4+4].copy_from_slice(&word.to_be_bytes());
+    }
+    out
+}
+
+/// Pure Rust SHA-256 producing a lowercase hex string. No dependencies.
+/// Must return `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad`
+/// for input `b"abc"`.
+pub fn sha256_hex(input: &[u8]) -> String {
+    sha256_bytes(input).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +447,9 @@ fn per_key_lock(key: &str) -> Arc<Mutex<()>> {
 // curl OAuth POST helper
 // ---------------------------------------------------------------------------
 
-fn oauth_post(body: &str) -> Option<String> {
+/// POST `body` (JSON) to `OAUTH_TOKEN_URL` via curl with body on stdin.
+/// Returns the raw response string on success, None on curl failure.
+pub fn oauth_token_request(body: &str) -> Option<String> {
     use std::io::Write;
     let mut child = std::process::Command::new("curl")
         .args([
@@ -459,6 +470,10 @@ fn oauth_post(body: &str) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn oauth_post(body: &str) -> Option<String> {
+    oauth_token_request(body)
 }
 
 // ---------------------------------------------------------------------------

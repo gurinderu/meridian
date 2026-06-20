@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod error;
+pub mod oauth;
 pub mod openai;
 pub mod profile_cli;
 pub mod profiles;
