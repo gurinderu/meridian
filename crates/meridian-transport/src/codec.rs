@@ -7,6 +7,7 @@ pub enum CliMessage {
     Result { subtype: String, result: Option<String>, raw: Value },
     ControlRequest { request_id: String, request: Value },
     StreamEvent { event: Value, raw: Value },
+    RateLimitEvent { info: Value, raw: Value },
     Other(Value),
 }
 
@@ -38,6 +39,10 @@ pub fn parse_line(line: &str) -> Result<CliMessage, serde_json::Error> {
         },
         ("stream_event", _) => CliMessage::StreamEvent {
             event: v.get("event").cloned().unwrap_or(Value::Null),
+            raw: v,
+        },
+        ("rate_limit_event", _) => CliMessage::RateLimitEvent {
+            info: v.get("rate_limit_info").cloned().unwrap_or(Value::Null),
             raw: v,
         },
         _ => CliMessage::Other(v),

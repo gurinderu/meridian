@@ -6,6 +6,7 @@ pub mod openai;
 pub mod profile_cli;
 pub mod profiles;
 pub mod pooled_runner;
+pub mod rate_limit;
 pub mod server;
 pub mod service;
 pub mod session;

@@ -26,8 +26,15 @@ fn parses_control_request_mcp_message() {
 }
 
 #[test]
-fn unknown_type_falls_back_to_other() {
-    assert!(matches!(parse_line(r#"{"type":"rate_limit_event"}"#).unwrap(), CliMessage::Other(_)));
+fn parses_rate_limit_event() {
+    let line = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.5},"uuid":"u","session_id":"s"}"#;
+    match parse_line(line).unwrap() {
+        CliMessage::RateLimitEvent { info, .. } => {
+            assert_eq!(info["rateLimitType"], "five_hour");
+            assert_eq!(info["status"], "allowed");
+        }
+        other => panic!("expected RateLimitEvent, got {other:?}"),
+    }
 }
 
 #[test]
