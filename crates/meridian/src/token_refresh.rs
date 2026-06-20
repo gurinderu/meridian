@@ -150,16 +150,36 @@ fn default_claude_dir() -> PathBuf {
     PathBuf::from(home).join(".claude")
 }
 
-fn canonicalize_or_lexical(dir: &str) -> PathBuf {
-    std::fs::canonicalize(dir).unwrap_or_else(|_| PathBuf::from(dir))
+/// Lexical absolutize matching Node's `path.resolve()` — the semantics Claude
+/// Code uses to derive the keychain service name. We must NOT use
+/// `fs::canonicalize` here: it resolves symlinks, so for a symlinked profile
+/// dir our hash would differ from the CLI's (lexical) hash and we'd read/write
+/// the wrong keychain entry. Absolutize against cwd, then fold `.`/`..` away.
+fn lexical_absolute(dir: &str) -> PathBuf {
+    use std::path::Component;
+    let p = std::path::Path::new(dir);
+    let base = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")).join(p)
+    };
+    let mut out = PathBuf::new();
+    for comp in base.components() {
+        match comp {
+            Component::ParentDir => { out.pop(); }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Map `claudeConfigDir` to the macOS Keychain service name Claude Code uses.
 /// Default `~/.claude` → bare `"Claude Code-credentials"`.
 /// Any other dir → `"Claude Code-credentials-<sha256(absPath)[..8]>"`.
 pub fn config_dir_to_keychain_service(dir: &str) -> String {
-    let abs = canonicalize_or_lexical(dir);
-    let default = canonicalize_or_lexical(default_claude_dir().to_str().unwrap_or(""));
+    let abs = lexical_absolute(dir);
+    let default = lexical_absolute(default_claude_dir().to_str().unwrap_or(""));
     if abs == default {
         return KEYCHAIN_SERVICE.to_string();
     }

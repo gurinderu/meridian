@@ -75,3 +75,13 @@ fn file_store_writes_credentials_0600() {
     assert_eq!(mode, 0o600, "credentials must be owner-only, got {mode:o}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn keychain_service_is_lexical_not_symlink_resolved() {
+    // `/a/b/../c` must fold to `/a/c` lexically (matching Node resolve()), so
+    // both spellings yield the SAME keychain service name.
+    let a = config_dir_to_keychain_service("/some/dir/../profile");
+    let b = config_dir_to_keychain_service("/some/profile");
+    assert_eq!(a, b, "lexical .. folding must match the CLI's path.resolve()");
+    assert!(a.starts_with("Claude Code-credentials-"));
+}
