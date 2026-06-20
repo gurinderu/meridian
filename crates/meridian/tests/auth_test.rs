@@ -10,6 +10,16 @@ fn constant_time_eq_basic() {
 }
 
 #[test]
+fn constant_time_eq_rejects_nul_padded_short_input() {
+    // a provided value shorter than the secret must never compare equal, even
+    // if the missing positions would XOR to zero against a (hypothetical) NUL
+    // secret byte — the length fold guards this.
+    assert!(!constant_time_eq(b"sec", b"secret"));
+    assert!(!constant_time_eq(b"sec\x00\x00\x00", b"secret"));
+    assert!(!constant_time_eq(b"", b"secret"));
+}
+
+#[test]
 fn extract_prefers_x_api_key_then_bearer() {
     assert_eq!(extract_key(Some("k1"), Some("Bearer k2")), Some("k1"));
     assert_eq!(extract_key(None, Some("Bearer k2")), Some("k2"));

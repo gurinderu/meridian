@@ -22,6 +22,8 @@ pub fn auth_enabled() -> bool {
 }
 
 /// The configured key from the environment, or `None` when unset/empty.
+/// Read once at router build (see `router`), not per request: changing
+/// `MERIDIAN_API_KEY` on a running server has no effect until restart.
 pub fn configured_key() -> Option<String> {
     std::env::var("MERIDIAN_API_KEY").ok().filter(|s| !s.is_empty())
 }
@@ -31,6 +33,11 @@ pub fn configured_key() -> Option<String> {
 /// not depend on the provided value's content; a length mismatch is folded in
 /// without an early return.
 pub fn constant_time_eq(provided: &[u8], secret: &[u8]) -> bool {
+    // The length XOR MUST be seeded before the loop: it is what guards against a
+    // false-accept when `provided` is shorter than `secret` (the loop's
+    // unwrap_or(0) would otherwise let a NUL-padded short input slip through if a
+    // secret byte were also 0x00). Any length difference makes `diff` non-zero,
+    // so `diff == 0` is unreachable unless the byte sequences are identical.
     let mut diff = (provided.len() ^ secret.len()) as u32;
     for (i, &s) in secret.iter().enumerate() {
         let p = provided.get(i).copied().unwrap_or(0);
