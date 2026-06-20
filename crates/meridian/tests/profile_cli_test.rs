@@ -78,3 +78,17 @@ fn remove_dirs_rejects_parent_dir_traversal() {
     assert!(dirs_to_remove_on_remove(&evil, pdir).is_empty(),
         "a claudeConfigDir containing .. must not be scheduled for deletion");
 }
+
+#[test]
+fn remove_dirs_sanitizes_oauth_token_id_traversal() {
+    // an oauth-token profile whose id contains traversal must NOT escape
+    // profiles_dir — the isolation dir is sanitized to a single segment.
+    let pdir = std::path::Path::new("/root/profiles");
+    let evil = ProfileConfig { id: "../../etc".into(), kind: Some(ProfileType::OauthToken),
+        claude_config_dir: None, api_key: None, base_url: None, oauth_token: Some("t".into()) };
+    let dirs = dirs_to_remove_on_remove(&evil, pdir);
+    for d in &dirs {
+        assert!(d.starts_with(pdir), "{d:?} must stay under {pdir:?}");
+        assert!(!d.to_string_lossy().contains(".."), "no .. in {d:?}");
+    }
+}

@@ -60,7 +60,10 @@ pub fn dirs_to_remove_on_remove(p: &ProfileConfig, profiles_dir: &Path) -> Vec<P
     let is_oauth = p.oauth_token.is_some()
         || p.kind == Some(crate::profiles::ProfileType::OauthToken);
     if is_oauth {
-        let iso = profiles_dir.join(&p.id);
+        // Sanitize the id to match overlay_for's isolation-dir join (profiles.rs)
+        // — both must produce the same single safe segment so removal deletes the
+        // dir that was actually created, and never escapes profiles_dir.
+        let iso = profiles_dir.join(meridian_transport::factory::safe_profile_segment(&p.id));
         if !dirs.contains(&iso) { dirs.push(iso); }
     }
     dirs

@@ -226,8 +226,14 @@ impl ProfileStore {
             ProfileType::OauthToken => {
                 if let Some(tok) = &p.oauth_token {
                     env.insert("CLAUDE_CODE_OAUTH_TOKEN".into(), tok.clone());
-                    // Isolate from host ~/.claude (profiles.ts:201).
-                    let dir = self.config_root.join("profiles").join(&p.id);
+                    // Isolate from host ~/.claude (profiles.ts:201). Sanitize the
+                    // id: it comes from MERIDIAN_PROFILES / profiles.json (not
+                    // validated on load), and an id like `../x` would otherwise
+                    // escape config_root into an arbitrary CLAUDE_CONFIG_DIR. Must
+                    // match dirs_to_remove_on_remove's join so removal targets the
+                    // same dir.
+                    let dir = self.config_root.join("profiles")
+                        .join(meridian_transport::factory::safe_profile_segment(&p.id));
                     env.insert("CLAUDE_CONFIG_DIR".into(), dir.to_string_lossy().into_owned());
                 } else {
                     tracing::warn!(
