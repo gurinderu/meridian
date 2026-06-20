@@ -48,10 +48,13 @@ pub fn save_settings_at(path: &Path, updates: MeridianSettings) -> std::io::Resu
 
 #[cfg(unix)]
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-	use std::os::unix::fs::OpenOptionsExt;
+	use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 	use std::io::Write;
 	let mut f = std::fs::OpenOptions::new()
 		.write(true).create(true).truncate(true).mode(0o600).open(path)?;
+	// mode(0o600) only applies on create — re-assert in case the file pre-existed
+	// with looser permissions (a manual edit or an older build).
+	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
 	f.write_all(bytes)
 }
 

@@ -44,8 +44,6 @@ impl TurnRunner for PooledRunner {
         }
         let key = IsolationKey {
             profile_id: profile_id(&req),
-            cwd: "/".into(),
-            options_hash: 0,
             resume: req.resume.clone(),
         };
         let mut lease = self
@@ -66,7 +64,7 @@ impl PooledRunner {
     async fn run_passthrough(&self, req: TurnRequest) -> Result<TurnResult, ProxyError> {
         use std::collections::HashMap;
         let pid = profile_id(&req);
-        let config_dir = self.config_root.join(&pid);
+        let config_dir = self.config_root.join(meridian_transport::factory::safe_profile_segment(&pid));
         let _ = std::fs::create_dir_all(&config_dir);
         let cfg = meridian_transport::spawn::SpawnConfig {
             config_dir,
@@ -112,7 +110,7 @@ impl StreamRunner for PooledRunner {
             // no profiles are configured (mirrors run_turn's profile_id()).
             // resume is None: the streaming path does not carry a resume token today.
             let pid = profile.unwrap_or_else(|| "default".into());
-            let key = IsolationKey { profile_id: pid, cwd: "/".into(), options_hash: 0, resume: None };
+            let key = IsolationKey { profile_id: pid, resume: None };
             let mut lease = match pool.acquire(&key).await {
                 Ok(Some(l)) => l,
                 Ok(None) => { let _ = tx.send(error_event("pool at capacity")).await; return; }

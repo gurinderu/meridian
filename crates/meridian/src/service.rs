@@ -15,7 +15,12 @@ pub fn is_healthy_response(raw: &str) -> bool {
 
 /// Probe `GET /health` on `127.0.0.1:<port>`; true iff it answers 200.
 pub async fn health_check(port: u16) -> bool {
-    let Ok(mut stream) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await else {
+    // Bound the whole probe: a peer that accepts but never replies must not hang
+    // `meridian status` forever (read_to_end has no implicit timeout).
+    let dur = std::time::Duration::from_secs(5);
+    let Ok(Ok(mut stream)) =
+        tokio::time::timeout(dur, tokio::net::TcpStream::connect(("127.0.0.1", port))).await
+    else {
         return false;
     };
     let req = "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
@@ -23,7 +28,9 @@ pub async fn health_check(port: u16) -> bool {
         return false;
     }
     let mut buf = Vec::new();
-    let _ = stream.read_to_end(&mut buf).await;
+    if tokio::time::timeout(dur, stream.read_to_end(&mut buf)).await.is_err() {
+        return false;
+    }
     is_healthy_response(&String::from_utf8_lossy(&buf))
 }
 

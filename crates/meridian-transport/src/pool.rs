@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+/// Pool partition key. A process is only reused for an identical key.
+/// (Earlier `cwd`/`options_hash` fields were dropped: they were always the same
+/// constant at every call site and were never applied to the spawned process —
+/// the pool advertised an isolation it did not enforce. Re-add them only
+/// alongside the matching `SpawnConfig`/`current_dir` wiring.)
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct IsolationKey {
     pub profile_id: String,
-    pub cwd: String,
-    pub options_hash: u64,
     pub resume: Option<String>,
 }
 

@@ -93,7 +93,7 @@ impl ProfileStore {
     }
 
     fn disk_profiles(&self) -> Vec<ProfileConfig> {
-        let mut g = self.disk_cache.lock().unwrap();
+        let mut g = self.disk_cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((at, ref cached)) = *g {
             if at.elapsed().as_millis() < DISK_CACHE_TTL_MS {
                 return cached.clone();
@@ -151,7 +151,7 @@ impl ProfileStore {
         let Some(saved) = crate::settings::get_active_profile() else { return };
         let eff = self.effective();
         if eff.is_empty() || eff.iter().any(|p| p.id == saved) {
-            *self.active.lock().unwrap() = Some(saved);
+            *self.active.lock().unwrap_or_else(|e| e.into_inner()) = Some(saved);
         } else {
             tracing::warn!("saved active profile \"{saved}\" not found; using default");
         }
@@ -166,11 +166,11 @@ impl ProfileStore {
         if self.disk_discovery {
             crate::settings::set_active_profile(&id);
         }
-        *self.active.lock().unwrap() = Some(id);
+        *self.active.lock().unwrap_or_else(|e| e.into_inner()) = Some(id);
     }
 
     pub fn active(&self) -> Option<String> {
-        self.active.lock().unwrap().clone()
+        self.active.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     fn find_in<'a>(eff: &'a [ProfileConfig], id: &str) -> Option<&'a ProfileConfig> {

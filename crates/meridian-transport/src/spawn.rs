@@ -47,7 +47,20 @@ pub fn build_args(cfg: &SpawnConfig) -> Vec<String> {
     a
 }
 
-const STRIP: &[&str] = &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "NODE_OPTIONS"];
+// Host vars that must NOT leak into the child: a profile that supplies its own
+// auth (overlay) would otherwise run a child that ALSO inherits the host's
+// credentials, defeating profile isolation (e.g. an api-key profile whose child
+// still sees the host's CLAUDE_CODE_OAUTH_TOKEN/base URL). The overlay is applied
+// last in build_env, so a profile that legitimately provides any of these
+// re-adds it. The default (no-overlay) path authenticates via the keychain
+// (CLAUDE_CONFIG_DIR + securestorage realignment), not these env vars.
+const STRIP: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "NODE_OPTIONS",
+];
 
 pub fn build_env(cfg: &SpawnConfig, base: &HashMap<String, String>) -> HashMap<String, String> {
     let mut env: HashMap<String, String> = base

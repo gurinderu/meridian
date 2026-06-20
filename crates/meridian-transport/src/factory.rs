@@ -47,11 +47,28 @@ pub fn new_with_resolver(
     CliProcessFactory { exe: exe.into(), config_root, tools, resolver }
 }
 
+/// Sanitize a profile id into a single safe path segment so it can never escape
+/// `config_root` (path traversal). Profile ids SHOULD be `[A-Za-z0-9_-]` (the
+/// CLI enforces it on `profile add`), but ids loaded from a hand-edited
+/// profiles.json / MERIDIAN_PROFILES are not validated — a `../x` or absolute id
+/// would otherwise reach `config_root.join(..)` and escape. A well-formed id
+/// maps to itself; any other char becomes `_`; empty becomes "default".
+pub fn safe_profile_segment(profile_id: &str) -> String {
+    let mut out: String = profile_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    if out.is_empty() {
+        out.push_str("default");
+    }
+    out
+}
+
 impl ProcessFactory for CliProcessFactory {
     type Proc = CliProcess;
 
     async fn spawn(&self, key: &IsolationKey) -> std::io::Result<CliProcess> {
-        let config_dir = self.config_root.join(&key.profile_id);
+        let config_dir = self.config_root.join(safe_profile_segment(&key.profile_id));
         std::fs::create_dir_all(&config_dir)?;
         let cfg = SpawnConfig {
             config_dir,

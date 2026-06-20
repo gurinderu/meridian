@@ -113,7 +113,13 @@ async fn main() {
 
 async fn serve(args: ServeArgs) {
     tracing_subscriber::fmt::init();
-    let config_root: PathBuf = std::env::temp_dir().join("meridian-config");
+    // Per-user runtime config root (per-profile CLAUDE_CONFIG_DIRs live here).
+    // Use ~/.config/meridian — NOT a world-writable /tmp path — and so the
+    // oauth-token isolation dir (config_root/profiles/<id>) coincides with the
+    // dir `meridian profile add` writes credentials to.
+    let config_root: PathBuf = std::env::var("HOME")
+        .map(|h| PathBuf::from(h).join(".config").join("meridian"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("meridian-config"));
     let mut store = meridian::profiles::ProfileStore::from_env_or_disk(config_root.clone());
     if std::env::var("MERIDIAN_PROFILES").is_err() {
         store = store.with_disk_discovery();
@@ -356,7 +362,9 @@ fn headless_oauth_login(config_dir: &std::path::Path) -> Result<(), String> {
 /// Reuses the same tokio TcpStream / raw HTTP/1.1 approach as health_check.
 async fn post_profiles_active(host: &str, port: u16, id: &str) -> Result<(), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect((host, port)).await
+    let dur = std::time::Duration::from_secs(5);
+    let mut stream = tokio::time::timeout(dur, tokio::net::TcpStream::connect((host, port))).await
+        .map_err(|_| format!("Timed out connecting to meridian at {host}:{port}"))?
         .map_err(|e| format!("Cannot connect to meridian at {host}:{port}: {e}"))?;
     let body = format!("{{\"profile\":\"{}\"}}", id.replace('"', "\\\""));
     let req = format!(
@@ -366,7 +374,10 @@ async fn post_profiles_active(host: &str, port: u16, id: &str) -> Result<(), Str
     stream.write_all(req.as_bytes()).await
         .map_err(|e| format!("Write error: {e}"))?;
     let mut buf = Vec::new();
-    let _ = stream.read_to_end(&mut buf).await;
+    // Bound the read — a non-responsive peer must not hang `profile use` forever.
+    tokio::time::timeout(dur, stream.read_to_end(&mut buf)).await
+        .map_err(|_| "Timed out waiting for meridian's response".to_string())?
+        .map_err(|e| format!("Read error: {e}"))?;
     let raw = String::from_utf8_lossy(&buf);
     // Check status line
     let status_line = raw.lines().next().unwrap_or("");

@@ -41,16 +41,16 @@ impl SessionStore {
         SessionStore { inner: Mutex::new(HashMap::new()) }
     }
     pub fn get(&self, key: &str) -> Option<String> {
-        self.inner.lock().unwrap().get(key).cloned()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).get(key).cloned()
     }
     pub fn insert(&self, key: String, session_id: String) {
-        self.inner.lock().unwrap().insert(key, session_id);
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).insert(key, session_id);
     }
     /// Evict every cached session. Called when the active profile changes:
     /// sessions were started under the previous account's credentials and
     /// must not be resumed under a different identity.
     pub fn clear(&self) {
-        self.inner.lock().unwrap().clear();
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }
 

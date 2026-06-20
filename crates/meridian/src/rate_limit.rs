@@ -38,12 +38,12 @@ impl RateLimitStore {
             return;
         }
         let key = info.get("rateLimitType").and_then(Value::as_str).unwrap_or(DEFAULT_BUCKET).to_string();
-        self.entries.lock().unwrap().insert(key, Entry { info: info.clone(), observed_at: now_ms() });
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).insert(key, Entry { info: info.clone(), observed_at: now_ms() });
     }
 
     /// Real (non-default) buckets, newest-first by observedAt.
     pub fn get_all(&self) -> Vec<Value> {
-        let g = self.entries.lock().unwrap();
+        let g = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let mut out: Vec<(u64, Value)> = g
             .iter()
             .filter(|(k, _)| k.as_str() != DEFAULT_BUCKET)
@@ -54,11 +54,11 @@ impl RateLimitStore {
     }
 
     pub fn entry_count(&self) -> usize {
-        self.entries.lock().unwrap().keys().filter(|k| k.as_str() != DEFAULT_BUCKET).count()
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).keys().filter(|k| k.as_str() != DEFAULT_BUCKET).count()
     }
 
     pub fn clear(&self) {
-        self.entries.lock().unwrap().clear();
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }
 

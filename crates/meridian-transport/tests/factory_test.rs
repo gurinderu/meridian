@@ -39,7 +39,7 @@ async fn pooled_real_process_runs_a_turn() {
     let root = std::env::temp_dir().join(format!("meridian-factory-{}", std::process::id()));
     let f = factory::new("claude", root, Arc::new(NoTools));
     let pool = Pool::new(f, 2);
-    let key = IsolationKey { profile_id: "default".into(), cwd: "/".into(), options_hash: 0, resume: None };
+    let key = IsolationKey { profile_id: "default".into(), resume: None };
 
     let mut lease = pool.acquire(&key).await.unwrap().unwrap();
     lease.proc().send_user_turn("Reply with exactly: OK").await.unwrap();
@@ -49,4 +49,19 @@ async fn pooled_real_process_runs_a_turn() {
     }
     lease.proc().shutdown().await;
     assert!(saw_result);
+}
+
+#[test]
+fn safe_profile_segment_blocks_traversal() {
+    use meridian_transport::factory::safe_profile_segment;
+    // well-formed ids pass through unchanged
+    assert_eq!(safe_profile_segment("work-1_x"), "work-1_x");
+    // traversal / separators / absolute can't escape — no '/' or '..' survive
+    for bad in ["../../etc", "/etc/passwd", "a/b", "..", "a/../b"] {
+        let seg = safe_profile_segment(bad);
+        assert!(!seg.contains('/') && seg != ".." && !seg.contains("../"),
+            "segment {seg:?} from {bad:?} must be a single safe path component");
+    }
+    // empty -> non-empty fallback
+    assert_eq!(safe_profile_segment(""), "default");
 }

@@ -32,9 +32,12 @@ pub fn save_profiles_json_at(path: &Path, profiles: &[ProfileConfig]) -> std::io
 
 #[cfg(unix)]
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    // mode(0o600) only applies on create — re-assert in case profiles.json (which
+    // persists OAuth tokens / API keys) pre-existed with looser permissions.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     f.write_all(bytes)
 }
 #[cfg(not(unix))]

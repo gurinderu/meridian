@@ -32,6 +32,10 @@ pub async fn spawn(
     // HOME, etc. are preserved.
     let mut child = Command::new(exe)
         .env_clear()
+        // Kill the child if CliProcess is dropped without an explicit shutdown()
+        // — tokio's Child does NOT kill on drop otherwise, which would orphan
+        // the `claude` process and its pipes.
+        .kill_on_drop(true)
         .args(build_args(cfg))
         .envs(build_env(cfg, base_env))
         .stdin(Stdio::piped())
@@ -41,6 +45,20 @@ pub async fn spawn(
 
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    // Drain stderr to EOF. The OS stderr pipe buffer is ~64KB; if nothing reads
+    // it and `claude` writes that much, the child blocks on write — which stalls
+    // stdout/NDJSON too and wedges the whole turn with no upper bound. Log at
+    // debug for diagnostics.
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if !line.trim().is_empty() {
+                tracing::debug!("meridian-transport: claude stderr: {line}");
+            }
+        }
+    });
 
     // Single writer task: serialize all stdin writes through one channel.
     let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(64);
