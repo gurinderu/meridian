@@ -75,6 +75,10 @@ enum ProfileCmd {
 struct ServeArgs {
     #[arg(long, default_value_t = DEFAULT_PORT)]
     port: u16,
+    /// Address to bind. Defaults to loopback; pass 0.0.0.0 to expose on the
+    /// network (do that only behind MERIDIAN_API_KEY or an isolated host).
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
     #[arg(long, default_value = "claude")]
     claude: String,
     #[arg(long, default_value_t = 10)]
@@ -85,7 +89,7 @@ struct ServeArgs {
 async fn main() {
     let cli = Cli::parse();
     match cli.cmd {
-        None => serve(ServeArgs { port: DEFAULT_PORT, claude: "claude".into(), cap: 10 }).await,
+        None => serve(ServeArgs { port: DEFAULT_PORT, host: "127.0.0.1".into(), claude: "claude".into(), cap: 10 }).await,
         Some(Cmd::Serve(a)) => serve(a).await,
         Some(Cmd::Status { port }) => {
             if health_check(port).await {
@@ -124,7 +128,7 @@ async fn serve(args: ServeArgs) {
     // is idle (Anthropic invalidates a refresh token left unused past expiry).
     const FIVE_MIN_MS: i64 = 5 * 60 * 1000;
     meridian::token_refresh::start_background_refresh(None, FIVE_MIN_MS, FIVE_MIN_MS);
-    let addr = format!("0.0.0.0:{}", args.port);
+    let addr = format!("{}:{}", args.host, args.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
     tracing::info!("meridian listening on {addr}");
     axum::serve(listener, app).await.expect("serve");

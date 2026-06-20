@@ -33,12 +33,14 @@ profile (see below).
 
 ```bash
 cargo build --release          # produces ./target/release/meridian (~3.9 MB, static)
-./target/release/meridian serve            # binds 0.0.0.0:8787 (default)
+./target/release/meridian serve            # binds 127.0.0.1:8787 (loopback, default)
 ./target/release/meridian serve --port 9000 --cap 16 --claude /path/to/claude
+./target/release/meridian serve --host 0.0.0.0   # expose on the network (see warning)
 ```
 
-> ⚠️ `serve` binds `0.0.0.0` (all interfaces), so it is reachable from the network.
-> Set `MERIDIAN_API_KEY` (see below) if the host isn't isolated.
+> By default `serve` binds **loopback** (`127.0.0.1`) — not reachable from the
+> network. Pass `--host 0.0.0.0` to expose it, and set `MERIDIAN_API_KEY` (see below)
+> when you do.
 
 Point a client at it:
 
@@ -51,7 +53,7 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8787 ANTHROPIC_API_KEY=placeholder claude
 
 | Command | Purpose |
 |---|---|
-| `meridian serve [--port 8787] [--cap 10] [--claude claude]` | Run the proxy (default command). |
+| `meridian serve [--port 8787] [--host 127.0.0.1] [--cap 10] [--claude claude]` | Run the proxy (default command). |
 | `meridian status [--port 8787]` | Check whether a proxy is responding. |
 | `meridian install` / `uninstall` | Install/remove the OS background service (launchd on macOS, systemd user unit on Linux). |
 | `meridian profile list` | List configured profiles. |
