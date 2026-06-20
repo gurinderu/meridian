@@ -69,6 +69,8 @@ pub fn router<R: TurnRunner + StreamRunner + 'static>(
         .route("/v1/messages", post(messages::<R>))
         .route("/v1/chat/completions", post(chat_completions::<R>))
         .route("/v1/models", get(models))
+        .route("/profiles/list", get(profiles_list::<R>))
+        .route("/profiles/active", post(profiles_active::<R>))
         .with_state(AppState { runner, sessions, profiles })
 }
 
@@ -228,6 +230,41 @@ fn extract_system(body: &Value) -> Option<String> {
         }
         _ => None,
     }
+}
+
+async fn profiles_list<R: TurnRunner + StreamRunner + 'static>(
+    State(state): State<AppState<R>>,
+) -> axum::response::Response {
+    let list = state.profiles.list();
+    let active = state.profiles.resolve_id(None);
+    let profiles: Vec<Value> = list.into_iter().map(|p| serde_json::json!({
+        "id": p.id,
+        "type": p.kind,
+        "isActive": p.is_active,
+    })).collect();
+    Json(serde_json::json!({ "profiles": profiles, "activeProfile": active })).into_response()
+}
+
+async fn profiles_active<R: TurnRunner + StreamRunner + 'static>(
+    State(state): State<AppState<R>>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    let parsed: Result<Value, _> = serde_json::from_slice(&body);
+    let profile = match parsed.ok().as_ref().and_then(|v| v.get("profile")).and_then(Value::as_str) {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => return ProxyError::BadRequest("Missing 'profile' in request body".into()).into_response(),
+    };
+    let eff = state.profiles.effective();
+    if eff.is_empty() {
+        return ProxyError::BadRequest("No profiles configured".into()).into_response();
+    }
+    if !eff.iter().any(|p| p.id == profile) {
+        let avail = eff.iter().map(|p| p.id.as_str()).collect::<Vec<_>>().join(", ");
+        return ProxyError::BadRequest(format!("Unknown profile: {profile}. Available: {avail}")).into_response();
+    }
+    state.profiles.set_active(profile.clone());
+    state.sessions.clear();
+    Json(serde_json::json!({ "success": true, "activeProfile": profile })).into_response()
 }
 
 fn extract_last_user_text(messages: &[Value]) -> Option<String> {
