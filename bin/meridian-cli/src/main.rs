@@ -51,12 +51,23 @@ enum ProfileCmd {
     Remove {
         id: String,
     },
-    /// Add a profile with an OAuth token.
+    /// Add a profile. With --oauth-token, stores a long-lived token; otherwise
+    /// runs a browser OAuth login (claude auth login, or --headless paste-code).
     Add {
         id: String,
         /// Long-lived OAuth token (sk-ant-oat-…). Omit to read from stdin.
         #[arg(long = "oauth-token")]
         oauth_token: Option<String>,
+        /// Headless login: print an OAuth URL and prompt for the returned code
+        /// instead of opening a browser. Ignored when --oauth-token is given.
+        #[arg(long)]
+        headless: bool,
+    },
+    /// Re-authenticate an existing browser-login (claude-max) profile.
+    Login {
+        id: String,
+        #[arg(long)]
+        headless: bool,
     },
 }
 
@@ -146,17 +157,64 @@ async fn run_profile(action: ProfileCmd) {
                 }
             }
         }
-        ProfileCmd::Add { id, oauth_token } => {
-            // browser login not yet supported — only --oauth-token in this slice (Phase 3d)
-            let token = match oauth_token {
-                Some(t) => t,
-                None => {
-                    // Not an error — the user just didn't opt into the token
-                    // path. Exit 0 so shell `&&`-chains / CI don't trip.
-                    println!("Browser login is not yet supported (Phase 3d).");
-                    println!("Please supply a token directly: meridian profile add {} --oauth-token <token>", id);
-                    std::process::exit(0);
+        ProfileCmd::Login { id, headless } => {
+            let path = match profiles_json_path() {
+                Some(p) => p,
+                None => { eprintln!("Cannot determine home directory."); std::process::exit(1); }
+            };
+            let profiles = load_profiles_json_at(&path);
+            let Some(p) = profiles.iter().find(|p| p.id == id) else {
+                eprintln!("error: Profile \"{id}\" not found. Run: meridian profile add {id}");
+                std::process::exit(1);
+            };
+            if p.oauth_token.is_some() || p.kind == Some(meridian::profiles::ProfileType::OauthToken) {
+                eprintln!("error: Profile \"{id}\" uses an OAuth token; `claude auth login` does not apply.");
+                std::process::exit(1);
+            }
+            let dir = match p.claude_config_dir.clone() {
+                Some(d) => std::path::PathBuf::from(d),
+                None => match profiles_dir() { Some(d) => d.join(&id), None => { eprintln!("Cannot determine home directory."); std::process::exit(1); } },
+            };
+            if !perform_login(&dir, headless) {
+                eprintln!("error: Login failed.");
+                std::process::exit(1);
+            }
+            println!("Profile \"{id}\" re-authenticated.");
+        }
+        ProfileCmd::Add { id, oauth_token, headless } => {
+            let path = match profiles_json_path() {
+                Some(p) => p,
+                None => { eprintln!("Cannot determine home directory."); std::process::exit(1); }
+            };
+            // No token → browser OAuth login (claude auth login or --headless).
+            let Some(token) = oauth_token else {
+                if !meridian::profile_cli::is_valid_profile_id(&id) {
+                    eprintln!("error: Invalid profile ID. Use only letters, numbers, hyphens, underscores.");
+                    std::process::exit(1);
                 }
+                let mut profiles = load_profiles_json_at(&path);
+                if profiles.iter().any(|p| p.id == id) {
+                    eprintln!("error: Profile \"{id}\" already exists.");
+                    std::process::exit(1);
+                }
+                let dir = match profiles_dir() { Some(d) => d.join(&id), None => { eprintln!("Cannot determine home directory."); std::process::exit(1); } };
+                let _ = std::fs::create_dir_all(&dir);
+                if !perform_login(&dir, headless) {
+                    eprintln!("error: Login did not complete. Try again: meridian profile add {id}");
+                    std::process::exit(1);
+                }
+                profiles.push(meridian::profiles::ProfileConfig {
+                    id: id.clone(),
+                    kind: Some(meridian::profiles::ProfileType::ClaudeMax),
+                    claude_config_dir: Some(dir.to_string_lossy().into_owned()),
+                    api_key: None, base_url: None, oauth_token: None,
+                });
+                if let Err(e) = save_profiles_json_at(&path, &profiles) {
+                    eprintln!("error: failed to save profiles.json: {e}");
+                    std::process::exit(1);
+                }
+                println!("Profile \"{id}\" created.");
+                return;
             };
             let path = match profiles_json_path() {
                 Some(p) => p,
@@ -215,6 +273,74 @@ async fn run_profile(action: ProfileCmd) {
             }
         }
     }
+}
+
+/// Run a browser OAuth login into `config_dir` (interactive `claude auth login`
+/// or the headless paste-code flow), then verify it with `claude auth status`.
+/// Returns true when the dir ends up authenticated.
+fn perform_login(config_dir: &std::path::Path, headless: bool) -> bool {
+    if headless {
+        if let Err(e) = headless_oauth_login(config_dir) {
+            eprintln!("error: {e}");
+            return false;
+        }
+    } else {
+        // `claude auth login` does the whole browser OAuth itself; inherit stdio
+        // so the user interacts with it directly.
+        match std::process::Command::new("claude")
+            .args(["auth", "login"])
+            .env("CLAUDE_CONFIG_DIR", config_dir)
+            .status()
+        {
+            Ok(s) if s.success() => {}
+            _ => { eprintln!("error: `claude auth login` failed."); return false; }
+        }
+    }
+    claude_auth_status(config_dir)
+}
+
+/// True when `claude auth status` reports loggedIn for this config dir.
+fn claude_auth_status(config_dir: &std::path::Path) -> bool {
+    match std::process::Command::new("claude")
+        .args(["auth", "status"])
+        .env("CLAUDE_CONFIG_DIR", config_dir)
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            meridian::oauth::auth_status_logged_in(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => false,
+    }
+}
+
+/// Headless OAuth: print the authorize URL, read the pasted code from stdin,
+/// exchange it, and write the credentials into `config_dir`'s store.
+fn headless_oauth_login(config_dir: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+    let session = meridian::oauth::new_oauth_session().map_err(|e| format!("could not start OAuth session: {e}"))?;
+    println!("Open this URL in a browser, sign in, then paste the code shown:");
+    println!();
+    println!("{}", session.authorize_url);
+    println!();
+    print!("Paste code: ");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).map_err(|e| format!("read failed: {e}"))?;
+    let parsed = meridian::oauth::parse_authorization_code(&line).ok_or("no authorization code received")?;
+    if let Some(st) = &parsed.state {
+        if st != &session.state {
+            return Err("OAuth state mismatch — please retry the login".into());
+        }
+    }
+    let token = meridian::oauth::exchange_code(&parsed.code, &session.code_verifier, &session.state)
+        .ok_or("OAuth token exchange failed")?;
+    let creds = meridian::oauth::build_credentials_file(&token, meridian::token_refresh::now_ms())
+        .ok_or("OAuth response did not include the required tokens")?;
+    let store = meridian::token_refresh::create_platform_credential_store(config_dir.to_str());
+    if !store.write(&creds) {
+        return Err("failed to write credentials".into());
+    }
+    Ok(())
 }
 
 /// POST /profiles/active {"profile":<id>} to the running proxy.
