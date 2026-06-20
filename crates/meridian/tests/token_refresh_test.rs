@@ -58,3 +58,20 @@ fn file_store_roundtrip_and_ensure_fresh() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = store; // silence unused on non-macos
 }
+
+#[cfg(unix)]
+#[test]
+fn file_store_writes_credentials_0600() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("mer-tok-mode-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(".credentials.json");
+    let store = meridian::token_refresh::FileStore::new(path.clone());
+    let creds: meridian::token_refresh::CredentialsFile = serde_json::from_str(
+        r#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1}}"#).unwrap();
+    use meridian::token_refresh::CredentialStore;
+    assert!(store.write(&creds));
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "credentials must be owner-only, got {mode:o}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

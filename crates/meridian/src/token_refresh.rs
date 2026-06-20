@@ -228,7 +228,9 @@ impl CredentialStore for FileStore {
                 return false;
             }
         }
-        match std::fs::write(&self.path, serialize_credentials(c)) {
+        // 0o600 owner-only — the file holds live OAuth access/refresh tokens.
+        // A plain fs::write would leave it world-readable (0o644).
+        match write_credentials_private(&self.path, serialize_credentials(c).as_bytes()) {
             Ok(()) => true,
             Err(e) => {
                 tracing::warn!("token_refresh.file_write_failed path={} err={e}", self.path.display());
@@ -236,6 +238,23 @@ impl CredentialStore for FileStore {
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn write_credentials_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    // truncate + create with 0o600. (mode() only applies on create; also
+    // re-assert perms in case the file pre-existed with looser bits.)
+    let mut f = std::fs::OpenOptions::new()
+        .write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    f.write_all(bytes)
+}
+
+#[cfg(not(unix))]
+fn write_credentials_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, bytes)
 }
 
 // ---------------------------------------------------------------------------
