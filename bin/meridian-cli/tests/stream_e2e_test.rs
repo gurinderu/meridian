@@ -3,6 +3,23 @@ use meridian::pooled_runner::pooled_runner;
 use meridian::server::StreamRunner;
 use tokio_stream::StreamExt;
 
+/// Concatenate the assistant text from an SSE body's `content_block_delta`
+/// events. A raw `body.contains("WORD")` is fragile — the CLI splits text across
+/// deltas, so a codeword can land as `"PERSIMM"` + `"ON5"` in separate events.
+fn sse_text(body: &str) -> String {
+    let mut out = String::new();
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data:") else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(data.trim()) else { continue };
+        if v.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+            if let Some(t) = v.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
+                out.push_str(t);
+            }
+        }
+    }
+    out
+}
+
 #[tokio::test]
 #[ignore = "requires a live, authenticated `claude` CLI"]
 async fn stream_yields_deltas_and_stop() {
@@ -73,7 +90,8 @@ async fn streaming_multi_turn_keeps_context() {
         .body(Body::from(body.to_string())).unwrap()).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    let text = sse_text(&body);
     assert!(text.contains("KUMQUAT83"), "streaming reply must recall the codeword from flattened history; body: {text}");
 }
 
@@ -109,6 +127,7 @@ async fn streaming_resume_stores_and_continues() {
         {"role":"user","content":"What was the exact codeword?"}]});
     let r2 = app.oneshot(Request::post("/v1/messages").header("content-type","application/json")
         .body(Body::from(b2.to_string())).unwrap()).await.unwrap();
-    let text = String::from_utf8(axum::body::to_bytes(r2.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+    let body = String::from_utf8(axum::body::to_bytes(r2.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+    let text = sse_text(&body);
     assert!(text.contains("PERSIMMON5"), "streaming continuation recalls the codeword via resume: {text}");
 }
