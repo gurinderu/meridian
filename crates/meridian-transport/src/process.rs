@@ -131,4 +131,9 @@ impl CliProcess {
         let _ = self.child.start_kill();
         let _ = self.child.wait().await;
     }
+
+    /// True while the child process is still running. Non-blocking.
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
 }
