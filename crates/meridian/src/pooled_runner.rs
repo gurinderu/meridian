@@ -271,6 +271,11 @@ impl StreamRunner for PooledRunner {
                 return;
             }
             let mut session_id: Option<String> = None;
+            // We reconstruct the assistant text from content_block_delta/text_delta
+            // events only — this MUST yield the same string the non-stream path
+            // puts in the assistant message, or a stream turn and a non-stream turn
+            // of the same conversation would fingerprint differently and break
+            // cross-mode resume. Holds for the current CLI (text arrives as deltas).
             let mut reply_text = String::new();
             let mut pump_error = false;
             let pump = async {
