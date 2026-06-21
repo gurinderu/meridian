@@ -69,3 +69,24 @@ async fn discarded_lease_frees_slot_and_is_not_reused() {
     { let _l = pool.acquire(&key("a")).await.unwrap().unwrap(); }
     assert_eq!(spawned.load(Ordering::SeqCst), 2, "a discarded process must not be reused");
 }
+
+#[tokio::test]
+async fn take_proc_frees_slot_exactly_once_and_yields_the_process() {
+    let spawned = Arc::new(AtomicUsize::new(0));
+    let pool = Pool::new(CountingFactory { spawned: spawned.clone(), fail: false }, 1);
+    let taken = {
+        let mut l = pool.acquire(&key("a")).await.unwrap().unwrap();
+        assert_eq!(pool.live_count(), 1);
+        let p = l.take_proc();          // process leaves pool management
+        assert!(p.is_some());
+        // slot is freed immediately by take_proc, before the lease drops
+        assert_eq!(pool.live_count(), 0, "take_proc frees the cap slot");
+        p
+        // lease drops here with proc=None -> must NOT double-free / underflow
+    };
+    assert!(taken.is_some());
+    assert_eq!(pool.live_count(), 0, "no double-free on drop after take_proc");
+    // the single slot is reusable, and the taken process was NOT recycled
+    { let _l = pool.acquire(&key("a")).await.unwrap().unwrap(); }
+    assert_eq!(spawned.load(Ordering::SeqCst), 2, "taken process must not be reused from idle");
+}
