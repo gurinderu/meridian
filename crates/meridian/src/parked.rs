@@ -28,11 +28,14 @@ impl<P> ParkedStore<P> {
     }
 
     /// Insert; evict LRU entries over `max_parked` and return the evicted procs
-    /// (the caller shuts them down).
+    /// (the caller shuts them down). A same-key re-park returns the displaced
+    /// process too, so it gets a graceful shutdown rather than a silent drop.
     pub fn park(&self, profile_id: String, session_id: String, proc: P, max_parked: usize) -> Vec<P> {
         let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        g.insert((profile_id, session_id), Entry { proc, last_used: Instant::now() });
         let mut evicted = Vec::new();
+        if let Some(old) = g.insert((profile_id, session_id), Entry { proc, last_used: Instant::now() }) {
+            evicted.push(old.proc);
+        }
         while g.len() > max_parked.max(1) {
             // find the least-recently-used key
             let Some(lru) = g.iter().min_by_key(|(_, e)| e.last_used).map(|(k, _)| k.clone()) else { break };

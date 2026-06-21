@@ -41,3 +41,14 @@ fn reap_returns_timed_out_entries() {
     // nothing left to reap
     assert!(s.reap(std::time::Duration::from_millis(0)).is_empty());
 }
+
+#[test]
+fn same_key_repark_returns_displaced_proc() {
+    let s: ParkedStore<u32> = ParkedStore::new();
+    assert!(s.park("p".into(), "s".into(), 1, 8).is_empty());
+    // re-parking the same (profile,session) must return the old proc for shutdown
+    let displaced = s.park("p".into(), "s".into(), 2, 8);
+    assert_eq!(displaced, vec![1], "old proc returned for graceful shutdown");
+    assert_eq!(s.len(), 1);
+    assert_eq!(s.take("p", "s"), Some(2));
+}

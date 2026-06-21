@@ -117,7 +117,7 @@ impl TurnRunner for PooledRunner {
                     let evicted = self.parked.park(key_profile, sid, proc, self.max_parked);
                     for mut e in evicted { e.shutdown().await; }
                 }
-                // lease Drop will free the cap slot (discard=true set by take_proc)
+                // take_proc already freed the cap slot; lease Drop is a no-op (proc == None).
             }
             _ => {
                 lease.proc().shutdown().await;
