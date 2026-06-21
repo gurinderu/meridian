@@ -21,7 +21,7 @@ async fn full_tool_loop_returns_final_answer() {
     let root = std::env::temp_dir().join(format!("meridian-loop-{}", std::process::id()));
     let profiles = std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir()));
     let rate_limit = Arc::new(meridian::rate_limit::RateLimitStore::new());
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone(), rate_limit.clone())), Arc::new(SessionStore::new()), profiles, rate_limit);
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone(), rate_limit.clone(), 8)), Arc::new(SessionStore::new()), profiles, rate_limit);
     let weather_tool = json!({"name":"get_weather","description":"Get the weather for a city","input_schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}});
 
     // Turn 1: force a tool call.

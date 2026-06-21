@@ -83,13 +83,17 @@ struct ServeArgs {
     claude: String,
     #[arg(long, default_value_t = 10)]
     cap: usize,
+    #[arg(long, default_value_t = 8)]
+    max_parked: usize,
+    #[arg(long = "park-ttl-secs", default_value_t = 300)]
+    park_ttl_secs: u64,
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     match cli.cmd {
-        None => serve(ServeArgs { port: DEFAULT_PORT, host: "127.0.0.1".into(), claude: "claude".into(), cap: 10 }).await,
+        None => serve(ServeArgs { port: DEFAULT_PORT, host: "127.0.0.1".into(), claude: "claude".into(), cap: 10, max_parked: 8, park_ttl_secs: 300 }).await,
         Some(Cmd::Serve(a)) => serve(a).await,
         Some(Cmd::Status { port }) => {
             if health_check(port).await {
@@ -127,7 +131,18 @@ async fn serve(args: ServeArgs) {
     let profiles = Arc::new(store);
     profiles.restore_active();
     let rate_limit = std::sync::Arc::new(meridian::rate_limit::RateLimitStore::new());
-    let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap, profiles.clone(), rate_limit.clone()));
+    let runner = Arc::new(pooled_runner(args.claude, config_root, args.cap, profiles.clone(), rate_limit.clone(), args.max_parked));
+    {
+        let runner = runner.clone();
+        let ttl = std::time::Duration::from_secs(args.park_ttl_secs);
+        let tick = std::time::Duration::from_secs(args.park_ttl_secs.clamp(5, 60));
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tick).await;
+                runner.reap_parked(ttl).await;
+            }
+        });
+    }
     let sessions = Arc::new(SessionStore::new());
     let app = router(runner, sessions, profiles, rate_limit);
     // Keep the default account's OAuth refresh token warm even when the proxy

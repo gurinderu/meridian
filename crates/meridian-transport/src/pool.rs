@@ -94,6 +94,16 @@ impl<'a, F: ProcessFactory> Lease<'a, F> {
     pub fn discard(&mut self) {
         self.discard = true;
     }
+
+    /// Take the process OUT of this lease and return it to the caller. The
+    /// lease's Drop will still free the global-cap slot (like discard), but the
+    /// process itself is now owned by the caller (e.g. to park it). Must only be
+    /// called once; returns None if the process was already taken.
+    pub fn take_proc(&mut self) -> Option<F::Proc> {
+        let p = self.proc.take()?;
+        self.discard = true; // ensure Drop calls drop_one(), not release()
+        Some(p)
+    }
 }
 
 impl<'a, F: ProcessFactory> Drop for Lease<'a, F> {

@@ -13,7 +13,7 @@ async fn client_tool_surfaces_as_tool_use() {
     let root = std::env::temp_dir().join(format!("meridian-pt-e2e-{}", std::process::id()));
     let profiles = std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir()));
     let rate_limit = Arc::new(meridian::rate_limit::RateLimitStore::new());
-    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone(), rate_limit.clone())), Arc::new(SessionStore::new()), profiles, rate_limit);
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone(), rate_limit.clone(), 8)), Arc::new(SessionStore::new()), profiles, rate_limit);
     let body = json!({
         "model":"sonnet",
         "tools":[{"name":"edit_file","description":"Edit a file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}],

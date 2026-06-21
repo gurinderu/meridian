@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -7,8 +8,10 @@ use meridian_transport::codec::CliMessage;
 use meridian_transport::factory::{self};
 use meridian_transport::mcp::ToolRegistry;
 use meridian_transport::pool::{IsolationKey, Pool};
+use meridian_transport::process::CliProcess;
 
 use crate::error::ProxyError;
+use crate::parked::ParkedStore;
 use crate::profiles::ProfileStore;
 use crate::rate_limit::RateLimitStore;
 use crate::server::{TurnRequest, TurnResult, TurnRunner};
@@ -30,11 +33,35 @@ pub struct PooledRunner {
     config_root: PathBuf,
     profiles: Arc<ProfileStore>,
     rate_limit: Arc<RateLimitStore>,
+    parked: Arc<ParkedStore<CliProcess>>,
+    max_parked: usize,
 }
 
-pub fn pooled_runner(exe: String, config_root: PathBuf, cap: usize, profiles: Arc<ProfileStore>, rate_limit: Arc<RateLimitStore>) -> PooledRunner {
+pub fn pooled_runner(exe: String, config_root: PathBuf, cap: usize, profiles: Arc<ProfileStore>, rate_limit: Arc<RateLimitStore>, max_parked: usize) -> PooledRunner {
     let f = factory::new_with_resolver(exe.clone(), config_root.clone(), Arc::new(NoTools), profiles.clone());
-    PooledRunner { pool: std::sync::Arc::new(Pool::new(f, cap)), exe, config_root, profiles, rate_limit }
+    PooledRunner {
+        pool: std::sync::Arc::new(Pool::new(f, cap)),
+        exe,
+        config_root,
+        profiles,
+        rate_limit,
+        parked: Arc::new(ParkedStore::new()),
+        max_parked,
+    }
+}
+
+impl PooledRunner {
+    /// Expose the parked store (tests assert on `.len()`).
+    pub fn parked(&self) -> Arc<ParkedStore<CliProcess>> {
+        self.parked.clone()
+    }
+
+    /// Reap processes idle longer than `ttl` and shut them down.
+    pub async fn reap_parked(&self, ttl: Duration) {
+        for mut p in self.parked.reap(ttl) {
+            p.shutdown().await;
+        }
+    }
 }
 
 impl TurnRunner for PooledRunner {
@@ -42,8 +69,36 @@ impl TurnRunner for PooledRunner {
         if !req.tools.is_empty() {
             return self.run_passthrough(req).await;
         }
+        let key_profile = profile_id(&req);
+
+        // --- Warm path: try to reuse a parked process for this (profile, session) ---
+        if let Some(sid) = &req.resume {
+            if let Some(mut proc) = self.parked.take(&key_profile, sid) {
+                if proc.is_alive() {
+                    let result = run_one_turn(&mut proc, req.system.clone(), req.prompt.clone(), &self.rate_limit).await;
+                    match result {
+                        Ok(turn) => {
+                            if let Some(new_sid) = &turn.session_id {
+                                let evicted = self.parked.park(key_profile, new_sid.clone(), proc, self.max_parked);
+                                for mut e in evicted { e.shutdown().await; }
+                            } else {
+                                proc.shutdown().await;
+                            }
+                            return Ok(turn);
+                        }
+                        Err(_) => {
+                            proc.shutdown().await;
+                            // fall through to cold path
+                        }
+                    }
+                }
+                // proc not alive: drop it (kill_on_drop handles cleanup), fall through
+            }
+        }
+
+        // --- Cold path: spawn via pool ---
         let key = IsolationKey {
-            profile_id: profile_id(&req),
+            profile_id: key_profile.clone(),
             resume: req.resume.clone(),
         };
         let mut lease = self
@@ -54,8 +109,21 @@ impl TurnRunner for PooledRunner {
             .ok_or_else(|| ProxyError::Upstream("pool at capacity".into()))?;
 
         let result = run_one_turn(lease.proc(), req.system, req.prompt, &self.rate_limit).await;
-        lease.proc().shutdown().await;
-        lease.discard(); // a shut-down process must not return to the warm idle set
+        match &result {
+            Ok(turn) if turn.session_id.is_some() => {
+                // Park the live process under the result session_id
+                let sid = turn.session_id.clone().unwrap();
+                if let Some(proc) = lease.take_proc() {
+                    let evicted = self.parked.park(key_profile, sid, proc, self.max_parked);
+                    for mut e in evicted { e.shutdown().await; }
+                }
+                // lease Drop will free the cap slot (discard=true set by take_proc)
+            }
+            _ => {
+                lease.proc().shutdown().await;
+                lease.discard();
+            }
+        }
         result
     }
 }
