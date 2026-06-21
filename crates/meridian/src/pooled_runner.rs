@@ -187,7 +187,13 @@ impl StreamRunner for PooledRunner {
                 if let Some(mut proc) = parked.take(&pid, sid) {
                     if proc.is_alive() {
                         if let Err(e) = proc.send_user_turn(&full).await {
-                            let _ = tx.send(error_event(&format!("write failed: {e}"))).await;
+                            // The parked proc died between is_alive() and the
+                            // write (a race). Nothing has been forwarded to the
+                            // client yet, so DON'T emit an error event — just drop
+                            // it and fall through to the cold path for a clean
+                            // retry. (Emitting an error here would put a spurious
+                            // error event in front of the real cold stream.)
+                            tracing::debug!("parked proc write failed ({e}); falling back to cold spawn");
                             proc.shutdown().await;
                             // fall through to cold path below
                         } else {
