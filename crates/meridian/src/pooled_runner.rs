@@ -173,17 +173,90 @@ impl StreamRunner for PooledRunner {
         let (tx, rx) = mpsc::channel::<Value>(64);
         let pool = self.pool.clone();
         let rate_limit = self.rate_limit.clone();
+        let parked = self.parked.clone();
+        let max_parked = self.max_parked;
         tokio::spawn(async move {
             let pid = profile.unwrap_or_else(|| "default".into());
-            let key = IsolationKey { profile_id: pid, resume: resume.clone() };
+            let full = match system {
+                Some(s) if !s.is_empty() => format!("{s}\n\n{prompt}"),
+                _ => prompt,
+            };
+
+            // --- Warm path: try to reuse a parked process for this (profile, session) ---
+            if let Some(ref sid) = resume {
+                if let Some(mut proc) = parked.take(&pid, sid) {
+                    if proc.is_alive() {
+                        if let Err(e) = proc.send_user_turn(&full).await {
+                            let _ = tx.send(error_event(&format!("write failed: {e}"))).await;
+                            proc.shutdown().await;
+                            // fall through to cold path below
+                        } else {
+                            let mut session_id: Option<String> = None;
+                            let mut reply_text = String::new();
+                            let mut pump_error = false;
+                            let pump = async {
+                                while let Some(ev) = proc.next_event().await {
+                                    match ev {
+                                        CliMessage::Init { session_id: new_sid, .. } => {
+                                            session_id = Some(new_sid);
+                                        }
+                                        CliMessage::StreamEvent { event, .. } => {
+                                            if event.get("type").and_then(Value::as_str) == Some("content_block_delta") {
+                                                if let Some(text) = event
+                                                    .get("delta")
+                                                    .and_then(|d| d.get("text"))
+                                                    .and_then(Value::as_str)
+                                                {
+                                                    reply_text.push_str(text);
+                                                }
+                                            }
+                                            if tx.send(event).await.is_err() { break; }
+                                        }
+                                        CliMessage::Result { raw, result, .. } => {
+                                            if let Some(msg) = upstream_error_from_result(&raw, result) {
+                                                let _ = tx.send(error_event(&msg)).await;
+                                                pump_error = true;
+                                            }
+                                            break;
+                                        }
+                                        CliMessage::RateLimitEvent { info, .. } => rate_limit.record(&info),
+                                        _ => {}
+                                    }
+                                }
+                            };
+                            let timed_out = tokio::time::timeout(std::time::Duration::from_secs(300), pump).await.is_err();
+                            if timed_out {
+                                let _ = tx.send(error_event("upstream timeout")).await;
+                            }
+                            // Store session before disposition.
+                            if let Some(new_sid) = session_id {
+                                if !messages.is_empty() {
+                                    let mut convo = messages;
+                                    convo.push(json!({"role":"assistant","content":reply_text}));
+                                    sessions.insert(crate::session::fingerprint(&convo), new_sid.clone());
+                                }
+                                if !pump_error && !timed_out && proc.is_alive() {
+                                    let evicted = parked.park(pid, new_sid, proc, max_parked);
+                                    for mut e in evicted { e.shutdown().await; }
+                                } else {
+                                    proc.shutdown().await;
+                                }
+                            } else {
+                                proc.shutdown().await;
+                            }
+                            return;
+                        }
+                    }
+                    // proc not alive: drop it, fall through to cold path
+                }
+            }
+
+            // --- Cold path: acquire from pool + spawn ---
+            let key = IsolationKey { profile_id: pid.clone(), resume: resume.clone() };
             let mut lease = match pool.acquire(&key).await {
                 Ok(Some(l)) => l,
                 Ok(None) => { let _ = tx.send(error_event("pool at capacity")).await; return; }
                 Err(e) => { let _ = tx.send(error_event(&format!("spawn failed: {e}"))).await; return; }
-            };
-            let full = match system {
-                Some(s) if !s.is_empty() => format!("{s}\n\n{prompt}"),
-                _ => prompt,
             };
             if let Err(e) = lease.proc().send_user_turn(&full).await {
                 let _ = tx.send(error_event(&format!("write failed: {e}"))).await;
@@ -193,6 +266,7 @@ impl StreamRunner for PooledRunner {
             }
             let mut session_id: Option<String> = None;
             let mut reply_text = String::new();
+            let mut pump_error = false;
             let pump = async {
                 while let Some(ev) = lease.proc().next_event().await {
                     match ev {
@@ -216,6 +290,7 @@ impl StreamRunner for PooledRunner {
                         CliMessage::Result { raw, result, .. } => {
                             if let Some(msg) = upstream_error_from_result(&raw, result) {
                                 let _ = tx.send(error_event(&msg)).await;
+                                pump_error = true;
                             }
                             break;
                         }
@@ -224,7 +299,8 @@ impl StreamRunner for PooledRunner {
                     }
                 }
             };
-            if tokio::time::timeout(std::time::Duration::from_secs(300), pump).await.is_err() {
+            let timed_out = tokio::time::timeout(std::time::Duration::from_secs(300), pump).await.is_err();
+            if timed_out {
                 let _ = tx.send(error_event("upstream timeout")).await;
             }
             // Store session BEFORE shutdown so the next turn can resume.
@@ -232,11 +308,22 @@ impl StreamRunner for PooledRunner {
                 if !messages.is_empty() {
                     let mut convo = messages;
                     convo.push(json!({"role":"assistant","content":reply_text}));
-                    sessions.insert(crate::session::fingerprint(&convo), sid);
+                    sessions.insert(crate::session::fingerprint(&convo), sid.clone());
                 }
+                // Park if the stream completed cleanly and the proc is alive.
+                if !pump_error && !timed_out && lease.proc().is_alive() {
+                    if let Some(proc) = lease.take_proc() {
+                        let evicted = parked.park(pid, sid, proc, max_parked);
+                        for mut e in evicted { e.shutdown().await; }
+                    }
+                } else {
+                    lease.proc().shutdown().await;
+                    lease.discard();
+                }
+            } else {
+                lease.proc().shutdown().await;
+                lease.discard();
             }
-            lease.proc().shutdown().await;
-            lease.discard();
         });
         ReceiverStream::new(rx)
     }
