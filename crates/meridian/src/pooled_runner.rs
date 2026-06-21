@@ -168,17 +168,14 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 impl StreamRunner for PooledRunner {
-    fn run_stream(&self, _model: String, system: Option<String>, prompt: String, profile: Option<String>) -> EventStream {
+    #[allow(clippy::too_many_arguments)]
+    fn run_stream(&self, _model: String, system: Option<String>, prompt: String, profile: Option<String>, resume: Option<String>, messages: Vec<Value>, sessions: Arc<crate::session::SessionStore>) -> EventStream {
         let (tx, rx) = mpsc::channel::<Value>(64);
         let pool = self.pool.clone();
         let rate_limit = self.rate_limit.clone();
         tokio::spawn(async move {
-            // `profile` is already resolved by the HTTP handler via
-            // ProfileStore::resolve_id; the "default" fallback only applies when
-            // no profiles are configured (mirrors run_turn's profile_id()).
-            // resume is None: the streaming path does not carry a resume token today.
             let pid = profile.unwrap_or_else(|| "default".into());
-            let key = IsolationKey { profile_id: pid, resume: None };
+            let key = IsolationKey { profile_id: pid, resume: resume.clone() };
             let mut lease = match pool.acquire(&key).await {
                 Ok(Some(l)) => l,
                 Ok(None) => { let _ = tx.send(error_event("pool at capacity")).await; return; }
@@ -194,16 +191,29 @@ impl StreamRunner for PooledRunner {
                 lease.discard();
                 return;
             }
+            let mut session_id: Option<String> = None;
+            let mut reply_text = String::new();
             let pump = async {
                 while let Some(ev) = lease.proc().next_event().await {
                     match ev {
+                        CliMessage::Init { session_id: sid, .. } => {
+                            session_id = Some(sid);
+                        }
                         CliMessage::StreamEvent { event, .. } => {
+                            // Accumulate assistant text for session store.
+                            if event.get("type").and_then(Value::as_str) == Some("content_block_delta") {
+                                if let Some(text) = event
+                                    .get("delta")
+                                    .and_then(|d| d.get("text"))
+                                    .and_then(Value::as_str)
+                                {
+                                    reply_text.push_str(text);
+                                }
+                            }
                             let disconnected = tx.send(event).await.is_err();
-                            if disconnected { break; } // client disconnected
+                            if disconnected { break; }
                         }
                         CliMessage::Result { raw, result, .. } => {
-                            // Surface an upstream failure to the SSE client instead
-                            // of silently ending the stream (mirrors run_one_turn).
                             if let Some(msg) = upstream_error_from_result(&raw, result) {
                                 let _ = tx.send(error_event(&msg)).await;
                             }
@@ -216,6 +226,14 @@ impl StreamRunner for PooledRunner {
             };
             if tokio::time::timeout(std::time::Duration::from_secs(300), pump).await.is_err() {
                 let _ = tx.send(error_event("upstream timeout")).await;
+            }
+            // Store session BEFORE shutdown so the next turn can resume.
+            if let Some(sid) = session_id {
+                if !messages.is_empty() {
+                    let mut convo = messages;
+                    convo.push(json!({"role":"assistant","content":reply_text}));
+                    sessions.insert(crate::session::fingerprint(&convo), sid);
+                }
             }
             lease.proc().shutdown().await;
             lease.discard();

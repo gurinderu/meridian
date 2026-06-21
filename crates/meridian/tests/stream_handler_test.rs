@@ -17,7 +17,7 @@ impl TurnRunner for FakeRunner {
     }
 }
 impl StreamRunner for FakeRunner {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _profile: Option<String>) -> EventStream {
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _profile: Option<String>, _resume: Option<String>, _messages: Vec<serde_json::Value>, _sessions: std::sync::Arc<meridian::session::SessionStore>) -> EventStream {
         let (tx, rx) = mpsc::channel::<serde_json::Value>(8);
         tokio::spawn(async move {
             let _ = tx.send(serde_json::json!({"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}})).await;

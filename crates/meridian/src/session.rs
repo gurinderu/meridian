@@ -52,6 +52,9 @@ impl SessionStore {
     pub fn clear(&self) {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
+    pub fn len_for_test(&self) -> usize {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
 }
 
 impl Default for SessionStore {

@@ -16,7 +16,7 @@ impl meridian::server::TurnRunner for NoRun {
     }
 }
 impl meridian::server::StreamRunner for NoRun {
-    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _pr: Option<String>)
+    fn run_stream(&self, _m: String, _s: Option<String>, _p: String, _pr: Option<String>, _resume: Option<String>, _messages: Vec<serde_json::Value>, _sessions: std::sync::Arc<meridian::session::SessionStore>)
         -> meridian::sse::EventStream {
         let (_tx, rx) = tokio::sync::mpsc::channel(1);
         tokio_stream::wrappers::ReceiverStream::new(rx)

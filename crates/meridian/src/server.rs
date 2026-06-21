@@ -35,12 +35,16 @@ pub trait TurnRunner: Send + Sync {
 
 /// Runs one prompt and streams raw Anthropic stream-event Values as they arrive.
 pub trait StreamRunner: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
     fn run_stream(
         &self,
         model: String,
         system: Option<String>,
         prompt: String,
         profile: Option<String>,
+        resume: Option<String>,
+        messages: Vec<serde_json::Value>,
+        sessions: Arc<crate::session::SessionStore>,
     ) -> crate::sse::EventStream;
 }
 
@@ -112,15 +116,12 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
     let profile = Some(state.profiles.resolve_id(requested));
 
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
-        // Streaming has no resume/session continuity yet, so it must carry the
-        // FULL conversation (flatten) — sending only the last user message
-        // dropped all prior context on multi-turn streaming chats.
         if !messages.iter().any(|m| m.get("role").and_then(Value::as_str) == Some("user")) {
             return ProxyError::BadRequest("no user message found".into()).into_response();
         }
-        let prompt = flatten_conversation(messages);
+        let (resume, prompt) = stream_prompt(messages, &state.sessions);
         use tokio_stream::StreamExt;
-        let events = state.runner.run_stream(model, system, prompt, profile);
+        let events = state.runner.run_stream(model, system, prompt, profile, resume, messages.to_vec(), state.sessions.clone());
         let sse = events.map(|v| Ok::<_, std::convert::Infallible>(crate::sse::sse_event(&v)));
         return axum::response::sse::Sse::new(sse).into_response();
     }
@@ -199,7 +200,7 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
         use tokio_stream::StreamExt;
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::response::sse::Event, std::convert::Infallible>>(64);
-        let mut events = state.runner.run_stream(model.clone(), system, prompt, profile);
+        let mut events = state.runner.run_stream(model.clone(), system, prompt, profile, None, vec![], state.sessions.clone());
         let model2 = model.clone();
         tokio::spawn(async move {
             let mut chunker = crate::openai::new_chunker(&model2);
@@ -337,6 +338,25 @@ async fn auth_refresh<R: TurnRunner + StreamRunner + 'static>(
         (axum::http::StatusCode::INTERNAL_SERVER_ERROR,
          axum::Json(serde_json::json!({"success":false,"message":"Token refresh failed. If the problem persists, run 'claude login'."}))).into_response()
     }
+}
+
+fn stream_prompt(messages: &[Value], sessions: &crate::session::SessionStore) -> (Option<String>, String) {
+    let last_user_idx = messages
+        .iter()
+        .rposition(|m| m.get("role").and_then(Value::as_str) == Some("user"));
+    let last_user_idx = match last_user_idx {
+        Some(i) => i,
+        None => return (None, flatten_conversation(messages)),
+    };
+    let prefix = &messages[..last_user_idx];
+    let resume = sessions.get(&crate::session::fingerprint(prefix));
+    let last_user = &messages[last_user_idx];
+    let prompt = if resume.is_some() {
+        crate::session::message_text_pub(last_user)
+    } else {
+        flatten_conversation(messages)
+    };
+    (resume, prompt)
 }
 
 /// Flatten a whole conversation into one `role: text\n…` prompt — the
