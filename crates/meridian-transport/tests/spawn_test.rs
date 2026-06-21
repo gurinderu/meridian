@@ -98,3 +98,20 @@ fn empty_overlay_preserves_current_build_env() {
     assert!(env.contains_key("CLAUDE_CONFIG_DIR"));
     assert_eq!(env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR").map(String::as_str), Some(""));
 }
+
+#[test]
+fn lean_defaults_are_set_and_overridable() {
+    let env = build_env(&cfg(), &HashMap::new());
+    for k in ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_NON_ESSENTIAL_MODEL_CALLS",
+              "DISABLE_AUTOUPDATER", "DISABLE_TELEMETRY", "DISABLE_ERROR_REPORTING"] {
+        assert_eq!(env.get(k).map(String::as_str), Some("1"), "{k} should be forced on");
+    }
+    // a host value for one of these is overridden (forced on)
+    let mut base = HashMap::new();
+    base.insert("DISABLE_AUTOUPDATER".to_string(), "0".to_string());
+    assert_eq!(build_env(&cfg(), &base).get("DISABLE_AUTOUPDATER").map(String::as_str), Some("1"));
+    // but a profile overlay still wins last
+    let mut c = cfg();
+    c.env_overlay = HashMap::from([("DISABLE_TELEMETRY".to_string(), "0".to_string())]);
+    assert_eq!(build_env(&c, &HashMap::new()).get("DISABLE_TELEMETRY").map(String::as_str), Some("0"));
+}

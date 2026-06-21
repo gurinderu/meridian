@@ -120,12 +120,21 @@ keychain-backed.
   which ships a ~90 MB JS runtime plus `node_modules`).
 - **Instant cold start** (`--help` ≈ 0 ms; `serve` binds immediately) — native code,
   no JS engine warmup.
+- **Session-sticky processes:** the live `claude` process for a conversation is kept
+  parked (per `(profile, session)`) and the next turn is sent to it directly — so
+  continuation turns skip the ~1 s spawn + `--resume` reload that a cold spawn pays.
+  Bounded by `--max-parked` (LRU) + `--park-ttl-secs` (reaper) + `--cap`.
+- **Lean spawns:** each spawned CLI is forced into low-overhead mode
+  (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_NON_ESSENTIAL_MODEL_CALLS`,
+  auto-update/telemetry/error-reporting off) — no background update checks, analytics,
+  or title/flavor model calls.
 - A background OAuth-refresh scheduler keeps the default account's refresh token warm
   even on an idle proxy.
 
-> End-to-end latency is dominated by the `claude` CLI + the upstream API, which both
-> implementations share. The Rust win is in footprint, startup, and the proxy's own
-> per-request overhead.
+> First-turn end-to-end latency is dominated by the `claude` CLI cold-start + the
+> upstream API. Session-sticky reuse removes the cold-start from continuation turns
+> (the common case in a chat); the rest of the Rust win is in footprint, startup, and
+> the proxy's own per-request overhead.
 
 ## Scope
 

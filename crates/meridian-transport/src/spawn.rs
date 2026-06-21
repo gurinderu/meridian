@@ -54,6 +54,17 @@ pub fn build_args(cfg: &SpawnConfig) -> Vec<String> {
 // last in build_env, so a profile that legitimately provides any of these
 // re-adds it. The default (no-overlay) path authenticates via the keychain
 // (CLAUDE_CONFIG_DIR + securestorage realignment), not these env vars.
+/// Env defaults that make each spawned `claude` leaner: disable non-essential
+/// network traffic (auto-update, telemetry, error reporting) and background
+/// model calls. Applied in `build_env`; a profile overlay can still override.
+const LEAN_DEFAULTS: &[(&str, &str)] = &[
+    ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"),
+    ("DISABLE_NON_ESSENTIAL_MODEL_CALLS", "1"),
+    ("DISABLE_AUTOUPDATER", "1"),
+    ("DISABLE_TELEMETRY", "1"),
+    ("DISABLE_ERROR_REPORTING", "1"),
+];
+
 const STRIP: &[&str] = &[
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -68,6 +79,15 @@ pub fn build_env(cfg: &SpawnConfig, base: &HashMap<String, String>) -> HashMap<S
         .filter(|(k, _)| !STRIP.contains(&k.as_str()))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    // Lean-spawn defaults: meridian spawns one CLI per turn, so trim each
+    // process's non-essential background work — auto-update checks, telemetry /
+    // error reporting (the umbrella flag plus the individual ones), and
+    // background model calls (title/flavor generation). Verified not to change a
+    // turn's result. Forced on regardless of the host env; a profile overlay
+    // could still override below (it wins last).
+    for (k, v) in LEAN_DEFAULTS {
+        env.insert((*k).into(), (*v).into());
+    }
     env.insert("CLAUDE_CONFIG_DIR".into(), cfg.config_dir.to_string_lossy().into_owned());
     // Setting CLAUDE_CONFIG_DIR alone makes the CLI derive a per-config-dir
     // macOS keychain key (a `-<hash>` suffix), so the default OAuth token is
