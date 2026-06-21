@@ -112,10 +112,13 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
     let profile = Some(state.profiles.resolve_id(requested));
 
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
-        let prompt = match extract_last_user_text(messages) {
-            Some(p) => p,
-            None => return ProxyError::BadRequest("no user message text found".into()).into_response(),
-        };
+        // Streaming has no resume/session continuity yet, so it must carry the
+        // FULL conversation (flatten) — sending only the last user message
+        // dropped all prior context on multi-turn streaming chats.
+        if !messages.iter().any(|m| m.get("role").and_then(Value::as_str) == Some("user")) {
+            return ProxyError::BadRequest("no user message found".into()).into_response();
+        }
+        let prompt = flatten_conversation(messages);
         use tokio_stream::StreamExt;
         let events = state.runner.run_stream(model, system, prompt, profile);
         let sse = events.map(|v| Ok::<_, std::convert::Infallible>(crate::sse::sse_event(&v)));
@@ -139,11 +142,7 @@ async fn messages<R: TurnRunner + StreamRunner + 'static>(
     } else if resume.is_some() {
         crate::session::message_text_pub(last_user)
     } else {
-        messages
-            .iter()
-            .map(|m| format!("{}: {}", m.get("role").and_then(Value::as_str).unwrap_or(""), crate::session::message_text_pub(m)))
-            .collect::<Vec<_>>()
-            .join("\n")
+        flatten_conversation(messages)
     };
 
     let mcp_tools = body
@@ -340,21 +339,14 @@ async fn auth_refresh<R: TurnRunner + StreamRunner + 'static>(
     }
 }
 
-fn extract_last_user_text(messages: &[Value]) -> Option<String> {
-    let last_user = messages
+/// Flatten a whole conversation into one `role: text\n…` prompt — the
+/// self-contained form sent to a fresh (non-resumed) `claude` so it has the full
+/// context. Used by the non-stream no-resume path AND the streaming path (which
+/// has no resume/session continuity yet, so it must carry the full history).
+fn flatten_conversation(messages: &[Value]) -> String {
+    messages
         .iter()
-        .rev()
-        .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))?;
-    match last_user.get("content") {
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(Value::Array(parts)) => {
-            let text = parts
-                .iter()
-                .filter_map(|p| p.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n");
-            Some(text)
-        }
-        _ => None,
-    }
+        .map(|m| format!("{}: {}", m.get("role").and_then(Value::as_str).unwrap_or(""), crate::session::message_text_pub(m)))
+        .collect::<Vec<_>>()
+        .join("\n")
 }

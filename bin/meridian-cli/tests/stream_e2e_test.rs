@@ -50,3 +50,29 @@ async fn http_stream_true_streams_sse() {
     let text = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(text.contains("event: "), "no SSE event lines in body: {text}");
 }
+
+#[tokio::test]
+#[ignore = "requires a live, authenticated `claude` CLI"]
+async fn streaming_multi_turn_keeps_context() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+    use meridian::server::router;
+    use meridian::session::SessionStore;
+    let root = std::env::temp_dir().join(format!("meridian-streamctx-{}", std::process::id()));
+    let profiles = std::sync::Arc::new(meridian::profiles::ProfileStore::new(Vec::new(), std::env::temp_dir()));
+    let rate_limit = Arc::new(meridian::rate_limit::RateLimitStore::new());
+    let app = router(Arc::new(pooled_runner("claude".into(), root, 2, profiles.clone(), rate_limit.clone(), 8)), Arc::new(SessionStore::new()), profiles, rate_limit);
+    // A multi-turn conversation: the codeword is only in turn 1. Pre-fix, the
+    // streaming path sent only the last user message and would have NO context.
+    let body = serde_json::json!({"model":"sonnet","stream":true,"messages":[
+        {"role":"user","content":"Remember the codeword KUMQUAT83. Reply with just OK."},
+        {"role":"assistant","content":"OK"},
+        {"role":"user","content":"What was the exact codeword?"}]});
+    let resp = app.oneshot(Request::post("/v1/messages").header("content-type","application/json")
+        .body(Body::from(body.to_string())).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(text.contains("KUMQUAT83"), "streaming reply must recall the codeword from flattened history; body: {text}");
+}
