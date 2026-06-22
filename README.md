@@ -125,7 +125,9 @@ keychain-backed.
   continuation turns skip the ~1 s spawn + `--resume` reload that a cold spawn pays.
   Works for **both protocols and both modes** (Anthropic + OpenAI, streaming +
   non-streaming) — a continuation sends only the delta, not the whole history.
-  Bounded by `--max-parked` (LRU) + `--park-ttl-secs` (reaper) + `--cap`.
+  Bounded by `--max-parked` (LRU) + `--park-ttl-secs` (reaper) + `--cap`, and
+  optionally a hard memory ceiling `--max-parked-mem-mb` (Linux; evicts oldest
+  parked processes once their summed RSS exceeds the budget).
 - **Lean spawns:** each spawned CLI is forced into low-overhead mode
   (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_NON_ESSENTIAL_MODEL_CALLS`,
   auto-update/telemetry/error-reporting off) — no background update checks, analytics,
