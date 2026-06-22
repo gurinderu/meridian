@@ -361,6 +361,8 @@ impl StreamRunner for PooledRunner {
                     sessions.insert(crate::session::fingerprint(&convo), sid.clone());
                 }
                 // Park if the stream completed cleanly and the proc is alive.
+                // (proc is still Some here — take_proc hasn't been called yet, so
+                // lease.proc() can't panic.)
                 if !pump_error && !timed_out && lease.proc().is_alive() {
                     if let Some(proc) = lease.take_proc() {
                         let evicted = parked.park(pid, sid, proc, max_parked);
