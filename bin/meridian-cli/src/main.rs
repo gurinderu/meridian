@@ -87,13 +87,18 @@ struct ServeArgs {
     max_parked: usize,
     #[arg(long = "park-ttl-secs", default_value_t = 300)]
     park_ttl_secs: u64,
+    /// Cap the summed resident memory (MB) of parked processes; over it, the
+    /// reaper evicts oldest-first. 0 = disabled (count + TTL caps only).
+    /// Linux-only (reads /proc); a no-op elsewhere.
+    #[arg(long = "max-parked-mem-mb", default_value_t = 0)]
+    max_parked_mem_mb: u64,
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     match cli.cmd {
-        None => serve(ServeArgs { port: DEFAULT_PORT, host: "127.0.0.1".into(), claude: "claude".into(), cap: 10, max_parked: 8, park_ttl_secs: 300 }).await,
+        None => serve(ServeArgs { port: DEFAULT_PORT, host: "127.0.0.1".into(), claude: "claude".into(), cap: 10, max_parked: 8, park_ttl_secs: 300, max_parked_mem_mb: 0 }).await,
         Some(Cmd::Serve(a)) => serve(a).await,
         Some(Cmd::Status { port }) => {
             if health_check(port).await {
@@ -136,10 +141,14 @@ async fn serve(args: ServeArgs) {
         let runner = runner.clone();
         let ttl = std::time::Duration::from_secs(args.park_ttl_secs);
         let tick = std::time::Duration::from_secs(args.park_ttl_secs.clamp(5, 60));
+        let mem_budget = args.max_parked_mem_mb.saturating_mul(1024 * 1024);
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(tick).await;
                 runner.reap_parked(ttl).await;
+                if mem_budget > 0 {
+                    runner.reap_parked_over_mem(mem_budget).await;
+                }
             }
         });
     }

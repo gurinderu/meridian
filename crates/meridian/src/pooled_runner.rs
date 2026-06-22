@@ -62,6 +62,40 @@ impl PooledRunner {
             p.shutdown().await;
         }
     }
+
+    /// Evict oldest parked processes until their summed resident memory is within
+    /// `budget_bytes`, and shut them down. A hard memory ceiling on the parked
+    /// set that reacts faster than the TTL and adapts to actual conversation
+    /// size. RSS is read per-pid; where unreadable (non-Linux) it counts as 0,
+    /// so this safely no-ops there (the count + TTL caps still apply).
+    pub async fn reap_parked_over_mem(&self, budget_bytes: u64) {
+        let evicted = self.parked.reap_over_budget(budget_bytes, |p| {
+            p.pid().and_then(process_rss_bytes).unwrap_or(0)
+        });
+        for mut p in evicted {
+            p.shutdown().await;
+        }
+    }
+}
+
+/// Resident memory of a process in bytes. Linux reads `/proc/<pid>/status`
+/// `VmRSS` (kB — page-size-independent); other platforms return None (the
+/// RSS-budget reaper then no-ops there). No `unsafe`, no extra crate.
+#[cfg(target_os = "linux")]
+fn process_rss_bytes(pid: u32) -> Option<u64> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb * 1024);
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_rss_bytes(_pid: u32) -> Option<u64> {
+    None
 }
 
 impl TurnRunner for PooledRunner {

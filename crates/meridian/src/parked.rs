@@ -56,6 +56,35 @@ impl<P> ParkedStore<P> {
         stale.into_iter().filter_map(|k| g.remove(&k).map(|e| e.proc)).collect()
     }
 
+    /// Evict oldest-first (by last_used) until the summed `rss_of` of the
+    /// remaining parked procs is within `budget` bytes; return the evicted procs
+    /// (the caller shuts them down). No-op when the total is already within
+    /// budget. `rss_of` is called under the lock — fine here (parked count is
+    /// small and a per-pid RSS read is a microsecond file read).
+    pub fn reap_over_budget(&self, budget: u64, rss_of: impl Fn(&P) -> u64) -> Vec<P> {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut items: Vec<(String, String, Instant, u64)> = g
+            .iter()
+            .map(|(k, e)| (k.0.clone(), k.1.clone(), e.last_used, rss_of(&e.proc)))
+            .collect();
+        let mut total: u64 = items.iter().map(|(_, _, _, r)| *r).sum();
+        if total <= budget {
+            return Vec::new();
+        }
+        items.sort_by_key(|(_, _, t, _)| *t); // oldest first
+        let mut evicted = Vec::new();
+        for (p, s, _, r) in items {
+            if total <= budget {
+                break;
+            }
+            if let Some(e) = g.remove(&(p, s)) {
+                evicted.push(e.proc);
+                total = total.saturating_sub(r);
+            }
+        }
+        evicted
+    }
+
     pub fn len(&self) -> usize {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).len()
     }

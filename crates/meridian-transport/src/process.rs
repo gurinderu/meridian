@@ -136,4 +136,10 @@ impl CliProcess {
     pub fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
+
+    /// OS process id of the spawned `claude`, if still available. Used to read
+    /// the child's resident memory for the RSS-aware reaper.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.id()
+    }
 }
