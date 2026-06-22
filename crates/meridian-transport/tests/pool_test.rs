@@ -20,12 +20,16 @@ fn key(p: &str) -> IsolationKey {
 }
 
 #[tokio::test]
-async fn reuses_warm_process_for_same_key() {
+async fn each_acquire_spawns_a_fresh_process() {
+    // The pool does NOT recycle processes (reuse is session-keyed in ParkedStore),
+    // so two acquires of the same key spawn two processes; the first lease frees
+    // its slot on drop.
     let spawned = Arc::new(AtomicUsize::new(0));
     let pool = Pool::new(CountingFactory { spawned: spawned.clone(), fail: false }, 4);
     { let _l = pool.acquire(&key("a")).await.unwrap().unwrap(); }
+    assert_eq!(pool.live_count(), 0, "lease drop frees the slot");
     { let _l = pool.acquire(&key("a")).await.unwrap().unwrap(); }
-    assert_eq!(spawned.load(Ordering::SeqCst), 1);
+    assert_eq!(spawned.load(Ordering::SeqCst), 2, "no warm reuse — each acquire spawns");
 }
 
 #[tokio::test]
@@ -58,16 +62,15 @@ async fn spawn_failure_does_not_leak_a_cap_slot() {
 }
 
 #[tokio::test]
-async fn discarded_lease_frees_slot_and_is_not_reused() {
+async fn dropped_lease_frees_slot_and_is_not_reused() {
     let spawned = Arc::new(AtomicUsize::new(0));
     let pool = Pool::new(CountingFactory { spawned: spawned.clone(), fail: false }, 4);
     {
-        let mut l = pool.acquire(&key("a")).await.unwrap().unwrap();
-        l.discard();
-    }
-    assert_eq!(pool.live_count(), 0, "discard frees the cap slot");
+        let _l = pool.acquire(&key("a")).await.unwrap().unwrap();
+    } // drop frees the slot and drops the process (never recycled)
+    assert_eq!(pool.live_count(), 0, "lease drop frees the cap slot");
     { let _l = pool.acquire(&key("a")).await.unwrap().unwrap(); }
-    assert_eq!(spawned.load(Ordering::SeqCst), 2, "a discarded process must not be reused");
+    assert_eq!(spawned.load(Ordering::SeqCst), 2, "a dropped process must not be reused");
 }
 
 #[tokio::test]

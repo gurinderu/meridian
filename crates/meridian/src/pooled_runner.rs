@@ -162,7 +162,6 @@ impl TurnRunner for PooledRunner {
             }
             _ => {
                 lease.proc().shutdown().await;
-                lease.discard();
             }
         }
         result
@@ -308,7 +307,6 @@ impl StreamRunner for PooledRunner {
             if let Err(e) = lease.proc().send_user_turn(&full).await {
                 let _ = tx.send(error_event(&format!("write failed: {e}"))).await;
                 lease.proc().shutdown().await;
-                lease.discard();
                 return;
             }
             let mut session_id: Option<String> = None;
@@ -370,11 +368,9 @@ impl StreamRunner for PooledRunner {
                     }
                 } else {
                     lease.proc().shutdown().await;
-                    lease.discard();
                 }
             } else {
                 lease.proc().shutdown().await;
-                lease.discard();
             }
         });
         ReceiverStream::new(rx)
@@ -398,7 +394,8 @@ fn upstream_error_from_result(raw: &Value, result: Option<String>) -> Option<Str
 }
 
 /// Drives one prompt to completion on an already-acquired process. The caller
-/// is responsible for shutting the process down and discarding the lease.
+/// is responsible for shutting the process down (or parking it) and dropping
+/// the lease, which frees the global-cap slot.
 async fn run_one_turn(
     proc: &mut meridian_transport::process::CliProcess,
     system: Option<String>,
