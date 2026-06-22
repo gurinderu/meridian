@@ -69,11 +69,18 @@ impl PooledRunner {
     /// size. RSS is read per-pid; where unreadable (non-Linux) it counts as 0,
     /// so this safely no-ops there (the count + TTL caps still apply).
     pub async fn reap_parked_over_mem(&self, budget_bytes: u64) {
-        let evicted = self.parked.reap_over_budget(budget_bytes, |p| {
-            p.pid().and_then(process_rss_bytes).unwrap_or(0)
-        });
-        for mut p in evicted {
-            p.shutdown().await;
+        // Snapshot pids under the lock (cheap), read RSS OUTSIDE the lock (the
+        // /proc reads are blocking I/O — must not be held under a sync Mutex in
+        // an async task), then take + shut down the chosen keys.
+        let snap = self.parked.snapshot(|p| p.pid());
+        let items: Vec<((String, String), std::time::Instant, u64)> = snap
+            .into_iter()
+            .map(|(key, last_used, pid)| (key, last_used, pid.and_then(process_rss_bytes).unwrap_or(0)))
+            .collect();
+        for (profile, session) in crate::parked::over_budget_evictions(items, budget_bytes) {
+            if let Some(mut p) = self.parked.take(&profile, &session) {
+                p.shutdown().await;
+            }
         }
     }
 }

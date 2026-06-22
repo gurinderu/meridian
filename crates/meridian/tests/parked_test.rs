@@ -54,21 +54,21 @@ fn same_key_repark_returns_displaced_proc() {
 }
 
 #[test]
-fn reap_over_budget_evicts_oldest_until_under() {
-    let s: ParkedStore<u32> = ParkedStore::new();
-    // park a, b, c in time order (a oldest); rss = the stored value.
-    s.park("p".into(), "a".into(), 10, 8);
-    std::thread::sleep(std::time::Duration::from_millis(5));
-    s.park("p".into(), "b".into(), 20, 8);
-    std::thread::sleep(std::time::Duration::from_millis(5));
-    s.park("p".into(), "c".into(), 30, 8);
-    // total rss = 60; budget 35 -> evict oldest-first: a(10)->50>35, b(20)->30<=35, stop.
-    let evicted = s.reap_over_budget(35, |p| *p as u64);
-    assert_eq!(evicted, vec![10, 20], "evict oldest-first until summed rss <= budget");
-    assert_eq!(s.len(), 1);
-    assert_eq!(s.take("p", "c"), Some(30), "the newest (within budget) stays");
+fn over_budget_evictions_picks_oldest_until_under() {
+    use meridian::parked::over_budget_evictions;
+    use std::time::Instant;
+    let t = Instant::now();
+    let k = |s: &str| ("p".to_string(), s.to_string());
+    // a oldest .. c newest; rss = 10/20/30, total 60.
+    let items = vec![
+        (k("a"), t, 10u64),
+        (k("b"), t + std::time::Duration::from_millis(1), 20),
+        (k("c"), t + std::time::Duration::from_millis(2), 30),
+    ];
+    // budget 35 -> evict oldest-first: a(10)->50>35, b(20)->30<=35, stop.
+    assert_eq!(over_budget_evictions(items.clone(), 35), vec![k("a"), k("b")]);
     // already within budget -> no-op
-    let s2: ParkedStore<u32> = ParkedStore::new();
-    s2.park("p".into(), "x".into(), 5, 8);
-    assert!(s2.reap_over_budget(100, |p| *p as u64).is_empty());
+    assert!(over_budget_evictions(items.clone(), 100).is_empty());
+    // budget below the smallest single entry -> evict EVERYTHING (oldest-first).
+    assert_eq!(over_budget_evictions(items, 5), vec![k("a"), k("b"), k("c")]);
 }
