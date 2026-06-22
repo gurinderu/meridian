@@ -190,7 +190,21 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> axum::response::Response {
-    let (model, system, prompt) = match crate::openai::openai_to_canonical(&body) {
+    // Extract the messages array early — needed for fingerprinting.
+    let messages = match body.get("messages").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+        Some(m) => m.to_vec(),
+        None => return ProxyError::BadRequest("messages must be a non-empty array".into()).into_response(),
+    };
+    // Find last user index for the prefix fingerprint.
+    let last_user_idx = messages.iter().rposition(|m| m.get("role").and_then(Value::as_str) == Some("user"));
+    let last_user_idx = match last_user_idx {
+        Some(i) => i,
+        None => return ProxyError::BadRequest("no user message found".into()).into_response(),
+    };
+    let prefix = &messages[..last_user_idx];
+    let resume = state.sessions.get(&crate::session::fingerprint(prefix));
+
+    let (model, system, prompt) = match crate::openai::openai_to_canonical_resumable(&body, resume.is_some()) {
         Ok(t) => t,
         Err(e) => return ProxyError::BadRequest(e).into_response(),
     };
@@ -200,7 +214,7 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
         use tokio_stream::StreamExt;
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::response::sse::Event, std::convert::Infallible>>(64);
-        let mut events = state.runner.run_stream(model.clone(), system, prompt, profile, None, vec![], state.sessions.clone());
+        let mut events = state.runner.run_stream(model.clone(), system, prompt, profile, resume, messages, state.sessions.clone());
         let model2 = model.clone();
         tokio::spawn(async move {
             let mut chunker = crate::openai::new_chunker(&model2);
@@ -222,8 +236,17 @@ async fn chat_completions<R: TurnRunner + StreamRunner + 'static>(
         .map(|ts| crate::openai::openai_tools_to_mcp_defs(ts))
         .unwrap_or_default();
 
-    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume: None, tools: mcp_tools, profile }).await {
+    match state.runner.run_turn(TurnRequest { model: model.clone(), system, prompt, resume, tools: mcp_tools, profile }).await {
         Ok(r) => {
+            // Store the session so the next turn can resume it.
+            if let Some(sid) = r.session_id.clone() {
+                let reply_text = r.message.get("content").and_then(Value::as_array)
+                    .map(|b| b.iter().filter_map(|x| x.get("text").and_then(Value::as_str)).collect::<Vec<_>>().concat())
+                    .unwrap_or_default();
+                let mut convo: Vec<Value> = messages;
+                convo.push(serde_json::json!({"role":"assistant","content":reply_text}));
+                state.sessions.insert(crate::session::fingerprint(&convo), sid);
+            }
             let resp = if r.captured_tools.is_empty() {
                 crate::openai::anthropic_to_openai(&r.message, &model)
             } else {

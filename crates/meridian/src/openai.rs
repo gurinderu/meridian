@@ -17,6 +17,15 @@ pub fn extract_openai_content(content: &Value) -> String {
 /// Single-turn: prior user/assistant turns are packed into a
 /// `<conversation_history>` block; the last user message is the prompt.
 pub fn openai_to_canonical(body: &Value) -> Result<(String, Option<String>, String), String> {
+    openai_to_canonical_resumable(body, false)
+}
+
+/// Like `openai_to_canonical` but resume-aware.
+/// When `resume == true`, the returned `system` contains ONLY the system messages
+/// (no `<conversation_history>` block) because the resumed `claude` session
+/// already has the history. `prompt` is always the last user message.
+/// When `resume == false`, behaviour is identical to `openai_to_canonical`.
+pub fn openai_to_canonical_resumable(body: &Value, resume: bool) -> Result<(String, Option<String>, String), String> {
     let messages = body
         .get("messages")
         .and_then(Value::as_array)
@@ -41,14 +50,16 @@ pub fn openai_to_canonical(body: &Value) -> Result<(String, Option<String>, Stri
         .filter(|s| !s.is_empty())
         .collect();
 
-    let history: Vec<String> = messages
-        .iter()
-        .enumerate()
-        .filter(|(i, m)| *i != last_user_idx && matches!(role(m).as_str(), "user" | "assistant"))
-        .map(|(_, m)| format!("{}: {}", role(m), content(m)))
-        .collect();
-    if !history.is_empty() {
-        system_parts.push(format!("<conversation_history>\n{}\n</conversation_history>", history.join("\n")));
+    if !resume {
+        let history: Vec<String> = messages
+            .iter()
+            .enumerate()
+            .filter(|(i, m)| *i != last_user_idx && matches!(role(m).as_str(), "user" | "assistant"))
+            .map(|(_, m)| format!("{}: {}", role(m), content(m)))
+            .collect();
+        if !history.is_empty() {
+            system_parts.push(format!("<conversation_history>\n{}\n</conversation_history>", history.join("\n")));
+        }
     }
 
     let system = if system_parts.is_empty() { None } else { Some(system_parts.join("\n\n")) };
