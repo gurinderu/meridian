@@ -36,3 +36,23 @@ fn clear_evicts_all_sessions() {
     store.clear();
     assert!(store.get(&fp).is_none());
 }
+
+#[test]
+fn lru_evicts_oldest_over_cap() {
+    use meridian::session::SessionStore;
+    let s = SessionStore::with_cap(2);
+    s.insert("a".into(), "sa".into());
+    s.insert("b".into(), "sb".into());
+    s.insert("c".into(), "sc".into()); // over cap -> evict oldest ("a")
+    assert_eq!(s.len_for_test(), 2);
+    assert_eq!(s.get("a"), None, "oldest entry evicted");
+    assert_eq!(s.get("b").as_deref(), Some("sb"));
+    assert_eq!(s.get("c").as_deref(), Some("sc"));
+    // re-inserting an existing key refreshes its recency (largest seq), so the
+    // next overflow evicts the now-oldest ("b"), not "c".
+    s.insert("c".into(), "sc2".into());
+    s.insert("d".into(), "sd".into()); // evict oldest among {b,c} -> "b"
+    assert_eq!(s.get("b"), None);
+    assert_eq!(s.get("c").as_deref(), Some("sc2"));
+    assert_eq!(s.get("d").as_deref(), Some("sd"));
+}
