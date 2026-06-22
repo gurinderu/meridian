@@ -123,6 +123,8 @@ keychain-backed.
 - **Session-sticky processes:** the live `claude` process for a conversation is kept
   parked (per `(profile, session)`) and the next turn is sent to it directly — so
   continuation turns skip the ~1 s spawn + `--resume` reload that a cold spawn pays.
+  Works for **both protocols and both modes** (Anthropic + OpenAI, streaming +
+  non-streaming) — a continuation sends only the delta, not the whole history.
   Bounded by `--max-parked` (LRU) + `--park-ttl-secs` (reaper) + `--cap`.
 - **Lean spawns:** each spawned CLI is forced into low-overhead mode
   (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_NON_ESSENTIAL_MODEL_CALLS`,
