@@ -298,17 +298,30 @@ impl StreamRunner for PooledRunner {
             }
 
             // --- Cold path: acquire from pool + spawn ---
+            // Phase timing (measure-first, TASK-coldstart): break the cold turn
+            // into spawn / write / boot->init / TTFT / result so we can see where
+            // the seconds actually go (local boot vs the Anthropic round-trip).
+            let t0 = std::time::Instant::now();
             let key = IsolationKey { profile_id: pid.clone(), resume: resume.clone() };
             let mut lease = match pool.acquire(&key).await {
                 Ok(Some(l)) => l,
                 Ok(None) => { let _ = tx.send(error_event("pool at capacity")).await; return; }
                 Err(e) => { let _ = tx.send(error_event(&format!("spawn failed: {e}"))).await; return; }
             };
+            let spawn_ms = t0.elapsed().as_millis();
+            let t_write = std::time::Instant::now();
             if let Err(e) = lease.proc().send_user_turn(&full).await {
                 let _ = tx.send(error_event(&format!("write failed: {e}"))).await;
                 lease.proc().shutdown().await;
                 return;
             }
+            let write_ms = t_write.elapsed().as_millis();
+            // Stopwatch base for the remaining phases: the moment the user turn
+            // is on the wire. boot/TTFT/result are all measured from here.
+            let t_sent = std::time::Instant::now();
+            let mut boot_init_ms: Option<u128> = None;
+            let mut first_stream_ms: Option<u128> = None;
+            let mut result_ms: Option<u128> = None;
             let mut session_id: Option<String> = None;
             // We reconstruct the assistant text from content_block_delta/text_delta
             // events only — this MUST yield the same string the non-stream path
@@ -322,8 +335,12 @@ impl StreamRunner for PooledRunner {
                     match ev {
                         CliMessage::Init { session_id: sid, .. } => {
                             session_id = Some(sid);
+                            // First Init = claude finished booting (system/init).
+                            if boot_init_ms.is_none() { boot_init_ms = Some(t_sent.elapsed().as_millis()); }
                         }
                         CliMessage::StreamEvent { event, .. } => {
+                            // First stream event ~ first token off Anthropic (TTFT).
+                            if first_stream_ms.is_none() { first_stream_ms = Some(t_sent.elapsed().as_millis()); }
                             // Accumulate assistant text for session store.
                             if event.get("type").and_then(Value::as_str) == Some("content_block_delta") {
                                 if let Some(text) = event
@@ -338,6 +355,7 @@ impl StreamRunner for PooledRunner {
                             if disconnected { break; }
                         }
                         CliMessage::Result { raw, result, .. } => {
+                            result_ms = Some(t_sent.elapsed().as_millis());
                             if let Some(msg) = upstream_error_from_result(&raw, result) {
                                 let _ = tx.send(error_event(&msg)).await;
                                 pump_error = true;
@@ -353,6 +371,20 @@ impl StreamRunner for PooledRunner {
             if timed_out {
                 let _ = tx.send(error_event("upstream timeout")).await;
             }
+            // Phase breakdown for the cold (new-conversation) turn. spawn_ms +
+            // write_ms are local; boot_init is claude's own startup; first_stream
+            // (TTFT) and result are dominated by the Anthropic round-trip. A `-1`
+            // means that phase never arrived (e.g. error/timeout before it).
+            tracing::info!(
+                target: "meridian::coldturn",
+                spawn_ms = spawn_ms as u64,
+                write_ms = write_ms as u64,
+                boot_init_ms = boot_init_ms.map(|v| v as i64).unwrap_or(-1),
+                first_stream_ms = first_stream_ms.map(|v| v as i64).unwrap_or(-1),
+                result_ms = result_ms.map(|v| v as i64).unwrap_or(-1),
+                total_ms = t0.elapsed().as_millis() as u64,
+                "cold-turn phase breakdown (ms; boot/first_stream/result measured from user-turn send)"
+            );
             // Store session BEFORE shutdown so the next turn can resume.
             if let Some(sid) = session_id {
                 if !messages.is_empty() {
