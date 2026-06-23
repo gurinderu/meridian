@@ -49,6 +49,33 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8787 ANTHROPIC_API_KEY=placeholder claude
 # or any OpenAI client → http://127.0.0.1:8787/v1/chat/completions
 ```
 
+### Dev environment (Nix)
+
+A `flake.nix` pins the Rust toolchain (stable + `clippy`, `rustfmt`,
+`rust-analyzer`). With [direnv](https://direnv.net) the shell loads on `cd`:
+
+```bash
+direnv allow          # one-time, picks up .envrc → `use flake`
+# or, without direnv:
+nix develop           # drops you into the dev shell
+nix build             # release binary → ./result/bin/meridian
+nix run . -- serve    # build + run in one step
+```
+
+The flake exposes a **release** build (`packages.default`, binary `meridian`),
+a runnable app (`apps.default`), and a system-agnostic `overlays.default`. To
+use it from your own Nix config, add it as an input:
+
+```nix
+# flake.nix
+inputs.meridian.url = "github:gurinderu/meridian";
+
+# then, in home-manager / nix-darwin / NixOS:
+home.packages = [ meridian.packages.${pkgs.system}.default ];
+# …or via the overlay:
+nixpkgs.overlays = [ meridian.overlays.default ];   # → pkgs.meridian
+```
+
 ### Commands
 
 | Command | Purpose |
